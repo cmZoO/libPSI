@@ -322,7 +322,44 @@ namespace osuCrypto
 
 
 
-
+    void hashBinItems(
+        span<block> items,
+        block hashingSeed,
+        u64 numBins,
+        PRNG& prng,
+        MatrixView<u8> masks,
+        span<u64> perm,
+        u64 numHashes,
+        span<u64> binIndex,
+        span<u64> binIdx,
+        span<u8> binHash
+    ) {
+        Matrix<u64> binIdxs(items.size(), numHashes);
+        hashItems(items, binIdxs, hashingSeed, numBins, prng, masks, perm);
+        
+        for (u64 i = 0; i < items.size(); i++) {
+            for (u64 j = 0; j < numHashes; j++) {
+                auto bid = binIdxs(i, j);
+                if (bid != -1) {
+                    binIndex[bid]++;
+                } 
+            }
+        }
+        for (u64 i = 1; i < numBins; i++) {
+            binIndex[i] += binIndex[i - 1];
+        }
+        binIndex[numBins] = binIndex[numBins - 1];
+        for (u64 i = 0; i < items.size(); i++) {
+            for (u64 j = 0; j < numHashes; j++) {
+                auto bid = binIdxs(i, j);
+                if (bid != -1) {
+                    auto tIndex = --binIndex[bid];
+                    binIdx[tIndex] = i;
+                    binHash[tIndex] = j;
+                }
+            }
+        }
+    }
 
 
 
@@ -350,11 +387,8 @@ namespace osuCrypto
             while (recvedIdx < numBins)
             {
                 auto currentStepSize = std::min(stepSize, numBins - recvedIdx);
-
                 mOtSender->recvCorrection(chl, currentStepSize);
-
                 recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
-
                 cv_syn.notify_one();
             }
         });
@@ -362,35 +396,10 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S Online.hashing start");
 
-        Matrix<u64> binIdxs(inputs.size(), mParams.mNumHashes);
-        hashItems(inputs, binIdxs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute);
-
-        u64 *binIndex = new u64[numBins + 1];
-        u64 *binIdx = new u64[numBins * 3];
-        u8 *binHash = new u8[numBins * 3];
-        memset(binIndex, 0, sizeof(u64) * numBins);
-        for (u64 i = 0; i < inputs.size(); i++) {
-            for (u64 j = 0; j < mParams.mNumHashes; j++) {
-                auto bid = binIdxs(i, j);
-                if (bid != -1) {
-                    binIndex[bid]++;
-                } 
-            }
-        }
-        for (u64 i = 1; i < numBins; i++) {
-            binIndex[i] += binIndex[i - 1];
-        }
-        binIndex[numBins] = binIndex[numBins - 1];
-        for (u64 i = 0; i < inputs.size(); i++) {
-            for (u64 j = 0; j < mParams.mNumHashes; j++) {
-                auto bid = binIdxs(i, j);
-                if (bid != -1) {
-                    auto tIndex = --binIndex[bid];
-                    binIdx[tIndex] = i;
-                    binHash[tIndex] = j;
-                }
-            }
-        }
+        std::vector<u64> binIndex(numBins + 1);
+        std::vector<u64> binIdx(mParams.mNumHashes * numBins);
+        std::vector<u8> binHash(mParams.mNumHashes * numBins);
+        hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
 
         setTimePoint("kkrt.S Online.linear start");
 
@@ -416,16 +425,12 @@ namespace osuCrypto
             auto data = myMaskBuff.data() + myMaskBuff.stride() * i * mParams.mNumHashes;
             auto size = myMaskBuff.stride() * currentStepSize * mParams.mNumHashes;
 
-            chl.asyncSend(data, size);
+            chl.asyncSendCopy(data, size);
         }
         setTimePoint("kkrt.S Online.done start");
 
-        u8 dummy[1];
-        chl.send(dummy, 1);
-
-        delete[] binIndex;
-        delete[] binIdx;
-        delete[] binHash;
+        // u8 dummy[1];
+        // chl.send(dummy, 1);
 
         thrd.join();
     }

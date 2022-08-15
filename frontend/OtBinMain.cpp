@@ -587,7 +587,7 @@ void kkrtRecv(
                 printTimings(tag, chls, offlineTime, onlineTime, params, setSize, numThreads);
 
                 if (recvPSIs.mIntersection.size() != setSize / 2) {
-                    std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << setSize / 4 << std::endl;
+                    std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << setSize / 2 << std::endl;
                 }
                 sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.end());
                 int i;

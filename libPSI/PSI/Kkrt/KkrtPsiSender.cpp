@@ -347,7 +347,6 @@ namespace osuCrypto
         std::mutex mtx_syn;
         std::condition_variable cv_syn;
         auto thrd = std::thread([&]() {
-
             while (recvedIdx < numBins)
             {
                 auto currentStepSize = std::min(stepSize, numBins - recvedIdx);
@@ -366,37 +365,57 @@ namespace osuCrypto
         Matrix<u64> binIdxs(inputs.size(), mParams.mNumHashes);
         hashItems(inputs, binIdxs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute);
 
-        setTimePoint("kkrt.S Online.linear start");
-        auto encoding = myMaskBuff.data();
-
-        std::unique_lock<std::mutex> lck(mtx_syn);
-        for (u64 i = 0; i < inputs.size();)
-        {
-            auto start = i;
-            auto currentStepSize = std::min(stepSize, inputs.size() - i);
-
-            for (u64 j = 0; j < currentStepSize; ++j, ++i)
-            {
-                auto inputIdx = mPermute[i];
-
-                for (u64 h = 0; h < mParams.mNumHashes; ++h)
-                {
-
-                    auto bIdx = binIdxs(inputIdx, h);
-
-                    if (bIdx != u64(-1))
-                    {
-                        cv_syn.wait(lck, [bIdx, &recvedIdx]{
-                            return bIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
-                        });
-                        mOtSender->encode(bIdx, &inputs[inputIdx], encoding, myMaskBuff.stride());
-                    }
-                    encoding += myMaskBuff.stride();
+        u64 *binIndex = new u64[numBins + 1];
+        u64 *binIdx = new u64[numBins * 3];
+        u8 *binHash = new u8[numBins * 3];
+        memset(binIndex, 0, sizeof(u64) * numBins);
+        for (u64 i = 0; i < inputs.size(); i++) {
+            for (u64 j = 0; j < mParams.mNumHashes; j++) {
+                auto bid = binIdxs(i, j);
+                if (bid != -1) {
+                    binIndex[bid]++;
+                } 
+            }
+        }
+        for (u64 i = 1; i < numBins; i++) {
+            binIndex[i] += binIndex[i - 1];
+        }
+        binIndex[numBins] = binIndex[numBins - 1];
+        for (u64 i = 0; i < inputs.size(); i++) {
+            for (u64 j = 0; j < mParams.mNumHashes; j++) {
+                auto bid = binIdxs(i, j);
+                if (bid != -1) {
+                    auto tIndex = --binIndex[bid];
+                    binIdx[tIndex] = i;
+                    binHash[tIndex] = j;
                 }
             }
+        }
 
-            auto data = myMaskBuff.data() + myMaskBuff.stride() * start * mParams.mNumHashes;
+        setTimePoint("kkrt.S Online.linear start");
+
+        std::unique_lock<std::mutex> lck(mtx_syn);
+        for (u64 bIdx = 0; bIdx < numBins; bIdx++) {
+            cv_syn.wait(lck, [bIdx, &recvedIdx]{
+                return bIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+            });
+            for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+                auto inputIdx = binIdx[start];
+                auto inputHash = binHash[start];
+                mOtSender->encode(bIdx, &inputs[inputIdx], 
+                        myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
+                        myMaskBuff.stride());
+            }
+        }
+
+        setTimePoint("kkrt.S Online.send start");
+        for (u64 i = 0; i < inputs.size(); i += stepSize)
+        {
+            auto currentStepSize = std::min(stepSize, inputs.size() - i);
+
+            auto data = myMaskBuff.data() + myMaskBuff.stride() * i * mParams.mNumHashes;
             auto size = myMaskBuff.stride() * currentStepSize * mParams.mNumHashes;
+
             chl.asyncSend(data, size);
         }
         setTimePoint("kkrt.S Online.done start");
@@ -404,6 +423,9 @@ namespace osuCrypto
         u8 dummy[1];
         chl.send(dummy, 1);
 
+        delete[] binIndex;
+        delete[] binIdx;
+        delete[] binHash;
 
         thrd.join();
     }

@@ -473,8 +473,15 @@ void kkrtSend(
 
             for (u64 jj = 0; jj < params.mTrials; jj++)
             {
-                std::vector<block> set(setSize);
-                prng.get(set.data(), set.size());
+                std::vector<block> sendSet(setSize);
+                for (u64 i = 0; i < setSize; ++i)
+                {
+                    sendSet[i] = prng.get<block>();
+                    if (i < setSize / 2) {
+                        memset(&sendSet[i], 0, sizeof(block));
+                        ((u64 *)&sendSet[i])[0] = i;
+                    } 
+                }
 
                 KkrtNcoOtSender otSend;
 
@@ -489,7 +496,7 @@ void kkrtSend(
                 //sendChls[0].asyncSend(dummy, 1);
                 //sendChls[0].recv(dummy, 1);
 
-                sendPSIs.sendInput(set, sendChls);
+                sendPSIs.sendInput(sendSet, sendChls);
 
                 u64 dataSent = 0;
                 for (u64 g = 0; g < sendChls.size(); ++g)
@@ -534,10 +541,14 @@ void kkrtRecv(
             {
                 std::string tag("kkrt");
 
-                std::vector<block> sendSet(setSize), recvSet(setSize);
+                std::vector<block> recvSet(setSize);
                 for (u64 i = 0; i < setSize; ++i)
                 {
-                    sendSet[i] = recvSet[i] = prng.get<block>();
+                    recvSet[i] = prng.get<block>();
+                    if (i < setSize / 2) {
+                        memset(&recvSet[i], 0, sizeof(block));
+                        ((u64 *)&recvSet[i])[0] = i;
+                    } 
                 }
 
                 KkrtNcoOtReceiver otRecv;
@@ -574,6 +585,22 @@ void kkrtRecv(
                 //auto byteSent = chls[0]->getTotalDataSent() *chls.size();
 
                 printTimings(tag, chls, offlineTime, onlineTime, params, setSize, numThreads);
+
+                if (recvPSIs.mIntersection.size() != setSize / 2) {
+                    std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << setSize / 4 << std::endl;
+                }
+                sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.end());
+                int i;
+                for (i = 0; i < recvPSIs.mIntersection.size(); i++) {
+                    if (recvPSIs.mIntersection[i] != i) {
+                        break;
+                    }
+                }
+                if (i != recvPSIs.mIntersection.size()) {
+                    std::cout << "intersection wrong result" << std::endl;
+                } else {
+                    std::cout << "intersection success" << std::endl;
+                }
             }
         }
     }

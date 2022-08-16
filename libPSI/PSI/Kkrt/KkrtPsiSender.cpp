@@ -64,28 +64,29 @@ namespace osuCrypto
         if (mParams.mNumHashes != 3) throw std::runtime_error(LOCATION);
 
         mOtSenders.resize(chls.size());
+        prngs.resize(chls.size());
         std::thread otThrd[chls.size()];
         for (u64 i = 0; i < chls.size(); i++) {
-            block otSeed = mPrng.get<block>();
-            otThrd[i] = std::thread([i, otSeed, this, &chls]() {
+            prngs[i] = PRNG(mPrng.get<block>());
+            otThrd[i] = std::thread([i, this, &chls]() {
                 mOtSenders[i].configure(false, 40, 128);
-                PRNG otPrng(otSeed);
 
                 DefaultBaseOT baseBase;
                 std::array<std::array<block, 2>, 128> baseBaseOT;
-                baseBase.send(baseBaseOT, otPrng, chls[i]);
+                baseBase.send(baseBaseOT, prngs[i], chls[i]);
 
                 IknpOtExtReceiver base;
-                base.setBaseOts(baseBaseOT, otPrng, chls[i]);
+                base.setBaseOts(baseBaseOT, prngs[i], chls[i]);
 
                 BitVector baseChoice(mOtSenders[i].getBaseOTCount());
-                baseChoice.randomize(otPrng);
+                baseChoice.randomize(prngs[i]);
                 std::vector<block> baseOT(mOtSenders[i].getBaseOTCount());
-                base.receive(baseChoice, baseOT, otPrng, chls[i]);
+                base.receive(baseChoice, baseOT, prngs[i], chls[i]);
 
                 mOtSenders[i].setBaseOts(baseOT, baseChoice, chls[i]);
-
-                mOtSenders[i].init(mParams.numBins() + mParams.mStashSize, otPrng, chls[i]);
+                std::array<block, 4> keys;
+                PRNG(mHashingSeed).get(keys.data(), keys.size());
+                mOtSenders[i].mMultiKeyAES.setKeys(keys);
             });
         }
         
@@ -373,8 +374,6 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S Online.online start");
 
-        auto& chl = chls[0];
-        auto mOtSender = &mOtSenders[0];
         u64 maskSize = u64(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8; //by byte
         auto numBins = mParams.numBins();
 
@@ -397,28 +396,52 @@ namespace osuCrypto
             auto binEnd = std::min(numBins, binStart + thrdBinSize);
             oprfThrd[pid] = std::thread([pid, binStart, &chls, binEnd, &inputs, stepSize, this, &myMaskBuff, &binIndex, &binIdx, &binHash]() {
                 std::atomic<u64> recvedIdx(binStart);
-                std::mutex mtx_syn;
+                std::mutex mtx_syn, mtx_que;
                 std::condition_variable cv_syn;
+                std::queue<u8 *> recvQue;
+                u64 corByte = sizeof(block) * mOtSenders[pid].mGens.size() / 128;
                 auto thrd = std::thread([&]() {
                     while (recvedIdx < binEnd)
                     {
                         auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
-                        mOtSenders[pid].recvCorrection(chls[pid], currentStepSize);
+                        u8* buffer = new u8[currentStepSize * corByte];
+                        chls[pid].recv(buffer, currentStepSize * corByte);
+
+                        mtx_que.lock();
+                        recvQue.push(buffer);
+                        mtx_que.unlock();
+
                         recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
                         cv_syn.notify_one();
                     }
                 });
                 std::unique_lock<std::mutex> lck(mtx_syn);
-                for (u64 bIdx = binStart; bIdx < binEnd; bIdx++) {
-                    cv_syn.wait(lck, [bIdx, &recvedIdx]{
-                        return bIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+                for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize) {
+                    cv_syn.wait(lck, [stepIdx, &recvedIdx]{
+                        return stepIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
                     });
-                    for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
-                        auto inputIdx = binIdx[start];
-                        auto inputHash = binHash[start];
-                        mOtSenders[pid].encode(bIdx - binStart, &inputs[inputIdx], 
-                                myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
-                                myMaskBuff.stride());
+                    auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
+                                            
+                    mOtSenders[pid].init(currentStepSize, prngs[pid], chls[pid]);
+                    mtx_que.lock();
+                    u8 * buffer = recvQue.front();
+                    recvQue.pop();
+                    mtx_que.unlock();
+                    auto dest = mOtSenders[pid].mCorrectionVals.begin() + (mOtSenders[pid].mCorrectionIdx * corByte / sizeof(block));
+                    memcpy((u8*)&*dest, buffer, currentStepSize * corByte);
+                    mOtSenders[pid].mCorrectionIdx += currentStepSize;
+                    delete[] buffer;
+
+                    auto stepEnd = stepIdx + currentStepSize;
+                    for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
+                    {    
+                        for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+                            auto inputIdx = binIdx[start];
+                            auto inputHash = binHash[start];
+                            mOtSenders[pid].encode(bIdx - stepIdx, &inputs[inputIdx], 
+                                    myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
+                                    myMaskBuff.stride());
+                        }
                     }
                 }
                 thrd.join();
@@ -450,10 +473,91 @@ namespace osuCrypto
         
         setTimePoint("kkrt.S Online.done start");
 
-        // u8 dummy[1];
-        // chl.send(dummy, 1);
     }
 }
 
 
 #endif
+
+
+
+
+
+
+
+
+                // std::atomic<u64> recvedIdx(binStart);
+                // std::mutex mtx_syn, mtx_que;
+                // std::condition_variable cv_syn;
+                // std::queue<u8 *> recvQue;
+                // auto thrd = std::thread([&]() {
+                //     while (recvedIdx < binEnd)
+                //     {
+                //         auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
+                //         u8* buffer = new u8[stepSize * sizeof(block) * 4];
+                //         chls[pid].recv(buffer, currentStepSize * sizeof(block) * 4);
+
+                //         mtx_que.lock();
+                //         recvQue.push(buffer);
+                //         mtx_que.unlock();
+
+                //         recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
+                //         cv_syn.notify_one();
+                //     }
+                // });
+                // std::unique_lock<std::mutex> lck(mtx_syn);
+                // for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize) {
+                //     cv_syn.wait(lck, [stepIdx, &recvedIdx]{
+                //         return stepIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+                //     });
+                //     auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
+                                            
+                //     mOtSenders[pid].init(currentStepSize, prngs[pid], chls[pid]);
+                //     mtx_que.lock();
+                //     u8 * buffer = recvQue.front();
+                //     recvQue.pop();
+                //     mtx_que.unlock();
+                //     auto dest = mOtSenders[pid].mCorrectionVals.begin() + (mOtSenders[pid].mCorrectionIdx * 4);
+                //     memcpy((u8*)&*dest, buffer, currentStepSize * sizeof(block) * 4);
+                //     mOtSenders[pid].mCorrectionIdx += currentStepSize;
+                //     delete[] buffer;
+
+                //     auto stepEnd = stepIdx + currentStepSize;
+                //     for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
+                //     {    
+                //         for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+                //             auto inputIdx = binIdx[start];
+                //             auto inputHash = binHash[start];
+                //             mOtSenders[pid].encode(bIdx - stepIdx, &inputs[inputIdx], 
+                //                     myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
+                //                     myMaskBuff.stride());
+                //         }
+                //     }
+                // }
+                // thrd.join();
+
+
+            // oprfThrd[pid] = std::thread([pid, binStart, &chls, binEnd, &inputs, stepSize, this, &myMaskBuff, &binIndex, &binIdx, &binHash]() {
+            //     u64 recvedIdx = binStart;
+            //     while (recvedIdx < binEnd)
+            //     {
+            //         auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
+                        
+            //         mOtSenders[pid].init(currentStepSize, prngs[pid], chls[pid]);
+            //         mOtSenders[pid].recvCorrection(chls[pid], currentStepSize);
+
+            //         auto stepEnd = recvedIdx + currentStepSize;
+            //         for (u64 bIdx = recvedIdx; bIdx < stepEnd; bIdx++) 
+            //         {
+            //             for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+            //                 auto inputIdx = binIdx[start];
+            //                 auto inputHash = binHash[start];
+            //                 mOtSenders[pid].encode(bIdx - recvedIdx, &inputs[inputIdx], 
+            //                         myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
+            //                         myMaskBuff.stride());
+            //             }
+            //         }
+
+            //         recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
+            //     }
+            // });

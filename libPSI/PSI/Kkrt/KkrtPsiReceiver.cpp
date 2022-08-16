@@ -61,27 +61,28 @@ namespace osuCrypto
         mHashingSeed = myHashSeeds ^ theirHashingSeeds;
 
         mOtRecvs.resize(chls.size());
+        prngs.resize(chls.size());
         std::thread otThrd[chls.size()];
         for (u64 i = 0; i < chls.size(); i++) {
-            block otSeed = prng.get<block>();
-            otThrd[i] = std::thread([i, otSeed, this, &chls]() {
+            prngs[i] = PRNG(prng.get<block>());
+            otThrd[i] = std::thread([i, this, &chls]() {
                 mOtRecvs[i].configure(false, 40, 128);
-                PRNG otPrng(otSeed);
 
                 DefaultBaseOT baseBase;
                 std::array<block, 128> baseBaseOT;
                 BitVector baseBaseChoice(128);
-                baseBaseChoice.randomize(otPrng);
-                baseBase.receive(baseBaseChoice, baseBaseOT, otPrng, chls[i]);
+                baseBaseChoice.randomize(prngs[i]);
+                baseBase.receive(baseBaseChoice, baseBaseOT, prngs[i], chls[i]);
 
                 IknpOtExtSender base;
                 base.setBaseOts(baseBaseOT, baseBaseChoice, chls[i]);
                 std::vector<std::array<block, 2>> baseOT(mOtRecvs[i].getBaseOTCount());
-                base.send(baseOT, otPrng, chls[i]);
+                base.send(baseOT, prngs[i], chls[i]);
 
-                mOtRecvs[i].setBaseOts(baseOT, otPrng, chls[i]);
-
-                mOtRecvs[i].init(mIndex.mBins.size() + mIndex.mStash.size(), otPrng, chls[i]);
+                mOtRecvs[i].setBaseOts(baseOT, prngs[i], chls[i]);
+                std::array<block, 4> keys;
+                PRNG(mHashingSeed).get(keys.data(), keys.size());
+                mOtRecvs[i].mMultiKeyAES.setKeys(keys);
             });
         }
 
@@ -103,20 +104,15 @@ namespace osuCrypto
             throw std::runtime_error("inputs.size() != mN");
         setTimePoint("kkrt.R Online.Start");
 
-        auto& chl = chls[0];
-        auto mOtRecv = &mOtRecvs[0];
-
         u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte
 
         mIndex.insert(inputs, mHashingSeed);
-
 
         std::array<std::unordered_map<u64, std::pair<block, u64>>, 3> localMasks;
         localMasks[0].reserve(mIndex.mBins.size()); //upper bound of # mask
         localMasks[1].reserve(mIndex.mBins.size());
         localMasks[2].reserve(mIndex.mBins.size());
         std::vector<std::mutex> mtx_syn(3);
-
 
         //======================Bucket BINs (not stash)==========================
         u64 stepSize = 1 << 14;
@@ -131,6 +127,7 @@ namespace osuCrypto
                 {
                     auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
                     auto stepEnd = stepIdx + currentStepSize;
+                    mOtRecvs[pid].init(currentStepSize, prngs[pid], chls[pid]);
                     for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
                     {
                         auto& bin = mIndex.mBins[bIdx];
@@ -140,21 +137,23 @@ namespace osuCrypto
                             auto hIdx = CuckooIndex<>::minCollidingHashIdx(bIdx,mIndex.mHashes[idx], 3, mIndex.mBins.size());
                             auto& item = inputs[idx];
                             block encoding = ZeroBlock;
-                            mOtRecvs[pid].encode(bIdx - binStart, &item, &encoding, maskByteSize);
+                            mOtRecvs[pid].encode(bIdx - stepIdx, &item, &encoding, maskByteSize);
                             mtx_syn[hIdx].lock();
                             localMasks[hIdx].emplace(encoding.as<u64>()[0], std::pair<block, u64>(encoding, idx));
                             mtx_syn[hIdx].unlock();
                         }
                         else
                         {
-                            mOtRecvs[pid].zeroEncode(bIdx);
+                            mOtRecvs[pid].zeroEncode(bIdx - stepIdx);
                         }
                     }
                     mOtRecvs[pid].sendCorrection(chls[pid], currentStepSize);
                 }
             });
         }
-
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            oprfThrd[pid].join();
+        }
         setTimePoint("kkrt.R Online.sendBucketMask done");
 
         std::thread maskThrd[chls.size()];
@@ -193,14 +192,11 @@ namespace osuCrypto
 
         for (u64 pid = 0; pid < chls.size(); pid++) {
             maskThrd[pid].join();
-            oprfThrd[pid].join();
             mIntersection.insert(mIntersection.end(), thrdIntersections[pid].begin(), thrdIntersections[pid].end());
         }
 
         setTimePoint("kkrt.R Online.Bucket done");
 
-        // u8 dummy[1];
-        // chl.recv(dummy, 1);
     }
 }
 #endif

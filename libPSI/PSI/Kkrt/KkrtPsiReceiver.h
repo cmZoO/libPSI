@@ -28,6 +28,8 @@ namespace osuCrypto
         std::vector<KkrtNcoOtReceiver> mOtRecvs;
 
         block mHashingSeed;
+
+        std::vector<PRNG> prngs;
         
         void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, block seed);
         void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, block seed);

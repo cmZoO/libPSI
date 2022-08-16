@@ -429,15 +429,25 @@ namespace osuCrypto
         }
 
         setTimePoint("kkrt.S Online.send start");
-        for (u64 i = 0; i < inputs.size(); i += stepSize)
-        {
-            auto currentStepSize = std::min(stepSize, inputs.size() - i);
-
-            auto data = myMaskBuff.data() + myMaskBuff.stride() * i * mParams.mNumHashes;
-            auto size = myMaskBuff.stride() * currentStepSize * mParams.mNumHashes;
-
-            chl.asyncSendCopy(data, size);
+        std::thread maskThrd[chls.size()];
+        u64 thrdDataSize = std::ceil(1.0 * inputs.size() / chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto inputStart = pid * thrdDataSize;
+            auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
+            maskThrd[pid] = std::thread([pid, inputStart, &chls, inputEnd, &myMaskBuff, stepSize, this]() {
+                for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)
+                {
+                    auto currentStepSize = std::min(stepSize, inputEnd - inputId);
+                    auto data = myMaskBuff.data() + myMaskBuff.stride() * inputId * mParams.mNumHashes;
+                    auto size = myMaskBuff.stride() * currentStepSize * mParams.mNumHashes;
+                    chls[pid].asyncSendCopy(data, size);
+                }
+            });
         }
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            maskThrd[pid].join();
+        }
+        
         setTimePoint("kkrt.S Online.done start");
 
         // u8 dummy[1];

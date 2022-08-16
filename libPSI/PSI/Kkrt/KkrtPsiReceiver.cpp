@@ -123,7 +123,6 @@ namespace osuCrypto
         setTimePoint("kkrt.R Online.computeBucketMask start");
         std::thread oprfThrd[chls.size()];
         u64 thrdBinSize = std::ceil(1.0 * mIndex.mBins.size() / chls.size());
-        std::cout << thrdBinSize * chls.size() << " " << mIndex.mBins.size() << std::endl;
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto binStart = pid * thrdBinSize;
             auto binEnd = std::min(mIndex.mBins.size(), binStart + thrdBinSize);
@@ -157,57 +156,53 @@ namespace osuCrypto
         }
 
         setTimePoint("kkrt.R Online.sendBucketMask done");
-        auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
-        std::array<u64, 3> idxs{ 0,0,0 };
 
-        auto numRegions = (mSenderSize  + stepSize -1) / stepSize;
-        auto masksPerRegion = stepSize * 3;
-        //std::this_thread::sleep_for(std::chrono::seconds(1));
-        Matrix<u8> recvBuff(masksPerRegion, maskByteSize);
-        //receive the sender's marks, we have 3 buffs that corresponding to the mask of elements used hash index 0,1,2
-        for (u64 regionIdx = 0; regionIdx < numRegions; ++regionIdx)
-        {
-            auto start = regionIdx * stepSize;
-            u64 curStepSize = std::min<u64>(mSenderSize - start, stepSize);
-            auto end = start + curStepSize;
-
-            chl.recv(recvBuff.data(), curStepSize * 3 * maskByteSize);
-
-            std::array<u8*, 3>iters{
-                recvBuff.data() + 0 * maskByteSize,
-                recvBuff.data() + 1 * maskByteSize,
-                recvBuff.data() + 2 * maskByteSize };
-
-            for (u64 i = start; i < end; ++i)
-            {
-
-                memcpy(idxs.data() + 0, iters[0], idxSize);
-                memcpy(idxs.data() + 1, iters[1], idxSize);
-                memcpy(idxs.data() + 2, iters[2], idxSize);
-
-                for (u64 k = 0; k < 3; ++k)
+        std::thread maskThrd[chls.size()];
+        u64 thrdDataSize = std::ceil(1.0 * inputs.size() / chls.size());
+        std::vector<std::vector<u64>> thrdIntersections(chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto inputStart = pid * thrdDataSize;
+            auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
+            maskThrd[pid] = std::thread([pid, inputStart, &thrdIntersections, maskByteSize, &chls, inputEnd, stepSize, &localMasks, this]() {
+                Matrix<u8> myMaskBuff(stepSize * mIndex.mParams.mNumHashes, maskByteSize);
+                for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)
                 {
-                    auto iter = localMasks[k].find(idxs[k]);
-                    //std::cout << " find(" << idxs[k] << ") = " << (iter != localMasks[k].end()) <<"   i " << i << " k " << k << std::endl;
-                    if (iter != localMasks[k].end() && memcmp(&iter->second.first, iters[k], maskByteSize) == 0)
+                    auto currentStepSize = std::min(stepSize, inputEnd - inputId);
+                    auto size = myMaskBuff.stride() * currentStepSize * mIndex.mParams.mNumHashes;
+                    chls[pid].recv(myMaskBuff.data(), size);
+
+                    auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
+                    auto data = myMaskBuff.data();
+                    u64 idxs;
+                    for (u64 i = 0; i < currentStepSize; ++i)
                     {
-                        mIntersection.emplace_back(iter->second.second);
-                        //break;
+                        for (u64 k = 0; k < 3; ++k)
+                        {
+                            memcpy(&idxs, data, idxSize);
+                            auto iter = localMasks[k].find(idxs);
+                            if (iter != localMasks[k].end() && memcmp(&iter->second.first, data, maskByteSize) == 0)
+                            {
+                                thrdIntersections[pid].emplace_back(iter->second.second);
+                            }
+                            data += maskByteSize;
+                        }
                     }
                 }
-
-                iters[0] += 3 * maskByteSize;
-                iters[1] += 3 * maskByteSize;
-                iters[2] += 3 * maskByteSize;
-            }
+            });
         }
-        setTimePoint("kkrt.R Online.Bucket done");
 
         for (u64 pid = 0; pid < chls.size(); pid++) {
+            maskThrd[pid].join();
             oprfThrd[pid].join();
+            mIntersection.insert(mIntersection.end(), thrdIntersections[pid].begin(), thrdIntersections[pid].end());
         }
+
+        setTimePoint("kkrt.R Online.Bucket done");
+
         // u8 dummy[1];
         // chl.recv(dummy, 1);
     }
 }
 #endif
+
+

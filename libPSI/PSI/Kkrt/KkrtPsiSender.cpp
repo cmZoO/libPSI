@@ -27,78 +27,79 @@ namespace osuCrypto
     }
     //extern std::string hexString(u8* data, u64 length);
 
+    void KkrtPsiSender::init(u64 senderSize, u64 recverSize, u64 statSec, Channel & chl0, block seed)
+    {
+        std::array<Channel, 1> c{ chl0 };
+        init(senderSize, recverSize, statSec, c, seed);
+    }
+
     void KkrtPsiSender::init(u64 senderSize, u64 recverSize, u64 statSec, Channel & chl0, NcoOtExtSender& ots, block seed)
     {
         std::array<Channel, 1> c{ chl0 };
-        init(senderSize, recverSize, statSec, c, ots, seed);
+        init(senderSize, recverSize, statSec, c, seed);
     }
 
-    void KkrtPsiSender::init(u64 senderSize, u64 recverSize, u64 statSec, span<Channel> chls, NcoOtExtSender& otSend, block seed)
+    void KkrtPsiSender::init(u64 senderSize, u64 recverSize, u64 statSec, span<Channel> chls, NcoOtExtSender& ots, block seed)
+    {
+        init(senderSize, recverSize, statSec, chls, seed);
+    }
+
+    void KkrtPsiSender::init(u64 senderSize, u64 recverSize, u64 statSec, span<Channel> chls, block seed)
     {
         mStatSecParam = statSec;
         mSenderSize = senderSize;
         mRecverSize = recverSize;
 
-        // we need a random hash function, so both commit to a seed and then decommit later
         mPrng.SetSeed(seed);
         block myHashSeeds;
         myHashSeeds = mPrng.get<block>();
         auto& chl = chls[0];
         chl.asyncSend((u8*)&myHashSeeds, sizeof(block));
-        //std::cout <<IoStream::lock << "send: sending PSI seed " << myHashSeeds << std::endl << IoStream::unlock;
-
 
         block theirHashingSeeds;
-        auto fu = chl.asyncRecv((u8*)&theirHashingSeeds, sizeof(block));
+        chl.recv((u8*)&theirHashingSeeds, sizeof(block));
+        mHashingSeed = myHashSeeds ^ theirHashingSeeds;
 
-        // init Simple hash
         mParams = CuckooIndex<>::selectParams(std::max<u64>(200, recverSize), statSec, 0,3);
         if (mParams.mNumHashes != 3) throw std::runtime_error(LOCATION);
 
-        otSend.configure(false, 40, 128);
+        mOtSenders.resize(chls.size());
+        std::thread otThrd[chls.size()];
+        for (u64 i = 0; i < chls.size(); i++) {
+            block otSeed = mPrng.get<block>();
+            otThrd[i] = std::thread([i, otSeed, this, &chls]() {
+                mOtSenders[i].configure(false, 40, 128);
+                PRNG otPrng(otSeed);
 
-        //mIndex.init(cuckoo.mBins.size(), mSenderSize, statSec, cuckoo.mParams.mNumHashes);
+                DefaultBaseOT baseBase;
+                std::array<std::array<block, 2>, 128> baseBaseOT;
+                baseBase.send(baseBaseOT, otPrng, chls[i]);
 
-        //do base OT
-        if (otSend.hasBaseOts() == false)
-        {
-#if defined(LIBOTE_HAS_BASE_OT) && defined(ENABLE_IKNP)
-            DefaultBaseOT baseBase;
-            std::array<std::array<block, 2>, 128> baseBaseOT;
-            baseBase.send(baseBaseOT, mPrng, chl);
+                IknpOtExtReceiver base;
+                base.setBaseOts(baseBaseOT, otPrng, chls[i]);
 
-            IknpOtExtReceiver base;
-            BitVector baseChoice(otSend.getBaseOTCount());
-            baseChoice.randomize(mPrng);
-            std::vector<block> baseOT(otSend.getBaseOTCount());
-            base.setBaseOts(baseBaseOT, mPrng, chl);
-            base.receive(baseChoice, baseOT, mPrng, chl);
+                BitVector baseChoice(mOtSenders[i].getBaseOTCount());
+                baseChoice.randomize(otPrng);
+                std::vector<block> baseOT(mOtSenders[i].getBaseOTCount());
+                base.receive(baseChoice, baseOT, otPrng, chls[i]);
 
-            otSend.setBaseOts(baseOT, baseChoice, chl);
-#else
-            throw std::runtime_error("base OTs must be set or enable base OTs and IKNP in libOTe. " LOCATION);
-#endif
+                mOtSenders[i].setBaseOts(baseOT, baseChoice, chls[i]);
+
+                mOtSenders[i].init(mParams.numBins() + mParams.mStashSize, otPrng, chls[i]);
+            });
         }
-
-        fu.get();
-        //std::cout << IoStream::lock << "send: recved PSI seed " << theirHashingSeeds << std::endl << IoStream::unlock;
-
-        mHashingSeed = myHashSeeds ^ theirHashingSeeds;
-
-        otSend.init(mParams.numBins() + mParams.mStashSize, mPrng, chl);
-
-        mOtSender = &otSend;
-        //setTimePoint("kkrt.s InitS.extFinished");
-
+        
         setTimePoint("kkrt.S offline.perm start");
         mPermute.resize(mSenderSize);
         for (u64 i = 0; i < mSenderSize; ++i) mPermute[i] = i;
 
-        //mPermute position
         std::shuffle(mPermute.begin(), mPermute.end(), mPrng);
 
         setTimePoint("kkrt.S offline.perm done");
 
+        for (u64 i = 0; i < chls.size(); i++) {
+            otThrd[i].join();
+        }
     }
 
 
@@ -373,6 +374,7 @@ namespace osuCrypto
         setTimePoint("kkrt.S Online.online start");
 
         auto& chl = chls[0];
+        auto mOtSender = &mOtSenders[0];
         u64 maskSize = u64(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8; //by byte
         auto numBins = mParams.numBins();
 

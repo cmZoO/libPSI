@@ -9,6 +9,8 @@
 #include "libOTe/NChooseOne/NcoOtExt.h"
 #include "libPSI/Tools/CuckooHasher.h"
 #include "cryptoTools/Common/CuckooIndex.h"
+#include "libOTe/NChooseOne/Kkrt/KkrtNcoOtReceiver.h"
+#include "libOTe/NChooseOne/Kkrt/KkrtNcoOtSender.h"
 
 namespace osuCrypto
 {
@@ -23,12 +25,14 @@ namespace osuCrypto
         std::vector<u64> mIntersection;
         CuckooIndex<NotThreadSafe> mIndex;
 
-        NcoOtExtReceiver * mOtRecv;
+        std::vector<KkrtNcoOtReceiver> mOtRecvs;
 
         block mHashingSeed;
         
-        void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, NcoOtExtReceiver& otRecv,  block seed);
-        void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtReceiver& otRecv,  block seed);
+        void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, block seed);
+        void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, block seed);
+        void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, NcoOtExtReceiver& otRecv, block seed);
+        void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtReceiver& otRecv, block seed);
         void sendInput(span<block> inputs, Channel& chl);
         void sendInput(span<block> inputs, span<Channel> chls);
 

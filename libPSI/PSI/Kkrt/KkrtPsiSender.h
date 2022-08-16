@@ -9,6 +9,8 @@
 #include <libOTe/NChooseOne/NcoOtExt.h>
 #include "cryptoTools/Crypto/PRNG.h"
 #include <cryptoTools/Common/CuckooIndex.h>
+#include "libOTe/NChooseOne/Kkrt/KkrtNcoOtReceiver.h"
+#include "libOTe/NChooseOne/Kkrt/KkrtNcoOtSender.h"
 
 namespace osuCrypto
 {
@@ -22,16 +24,19 @@ namespace osuCrypto
 
 		u64 mSenderSize, mRecverSize, mStatSecParam;
         PRNG mPrng;
-        std::vector<u64>mPermute;
+        std::vector<u64> mPermute;
 
 		//SimpleIndex mIndex;
         CuckooParam mParams;
 		block mHashingSeed;
 
-        NcoOtExtSender* mOtSender;
+        std::vector<KkrtNcoOtSender> mOtSenders;
 
-		void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtSender& otSender, block seed);
-		void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel & chl0, NcoOtExtSender& otSender, block seed);
+		void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, block seed);
+		void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel & chl0, block seed);
+
+		void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtSender& ots, block seed);
+		void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel & chl0, NcoOtExtSender& ots, block seed);
 
 		void sendInput(span<block> inputs, Channel& chl);
 		void sendInput(span<block> inputs, span<Channel> chls);

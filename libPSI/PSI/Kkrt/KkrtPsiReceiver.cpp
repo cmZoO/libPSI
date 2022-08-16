@@ -16,19 +16,6 @@ namespace osuCrypto
 {
 
 
-    std::string hexString(u8* data, u64 length)
-    {
-        std::stringstream ss;
-
-        for (u64 i = 0; i < length; ++i)
-        {
-
-            ss << std::hex << std::setw(2) << std::setfill('0') << (u16)data[i];
-        }
-
-        return ss.str();
-    }
-
     KkrtPsiReceiver::KkrtPsiReceiver()
     {
     }
@@ -38,14 +25,21 @@ namespace osuCrypto
     {
     }
 
-    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel  chl0, NcoOtExtReceiver& ots, block seed)
+    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel  chl0, block seed)
     {
         std::array<Channel, 1> chans{ chl0 };
-        init(senderSize, recverSize, statSecParam, chans, ots, seed);
+        init(senderSize, recverSize, statSecParam, chans, seed);
     }
 
+    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, NcoOtExtReceiver& otRecv, block seed) {
+        std::array<Channel, 1> chans{ chl0 };
+        init(senderSize, recverSize, statSecParam, chans, seed);
+    }
+    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtReceiver& otRecv, block seed) {
+        init(senderSize, recverSize, statSecParam, chls, seed);
+    }
 
-    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, NcoOtExtReceiver& otRecv, block seed)
+    void KkrtPsiReceiver::init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, block seed)
     {
 
         mStatSecParam = statSecParam;
@@ -54,56 +48,46 @@ namespace osuCrypto
 
         mIndex.init(std::max<u64>(200, recverSize), statSecParam, 0,3);
 
-        //mNumStash = get_stash_size(recverSize);
-
         setTimePoint("kkrt.Recv.Init.start");
         PRNG prng(seed);
         block myHashSeeds;
         myHashSeeds = prng.get<block>();
         auto& chl0 = chls[0];
 
-
-        //std::cout << IoStream::lock << "recv: sending PSI seed " << myHashSeeds << std::endl << IoStream::unlock;
-        // we need a random hash function, so both commit to a seed and then decommit later
         chl0.asyncSend((u8*)&myHashSeeds, sizeof(block));
         block theirHashingSeeds;
-        auto fu = chl0.asyncRecv((u8*)&theirHashingSeeds, sizeof(block));
-
-        //setTimePoint("kkrt.Init.hashSeed");
-
-        otRecv.configure(false, statSecParam, 128);
-
-        //do base OT
-        if (otRecv.hasBaseOts() == false)
-        {
-#if defined(LIBOTE_HAS_BASE_OT) && defined(ENABLE_IKNP)
-            setTimePoint("kkrt.recv.Init: BaseSSOT start");
-            DefaultBaseOT baseBase;
-            std::array<block, 128> baseBaseOT;
-            BitVector baseBaseChoice(128);
-            baseBaseChoice.randomize(prng);
-            baseBase.receive(baseBaseChoice, baseBaseOT, prng, chl0);
-
-            IknpOtExtSender base;
-            std::vector<std::array<block, 2>> baseOT(otRecv.getBaseOTCount());
-            base.setBaseOts(baseBaseOT, baseBaseChoice, chl0);
-            base.send(baseOT, prng, chl0);
-
-            otRecv.setBaseOts(baseOT, prng, chl0);
-            setTimePoint("kkrt.Kkrt PSI Init: BaseSSOT done");
-#else
-throw std::runtime_error("base OTs must be set or enable base OTs and IKNP in libOTe. " LOCATION);
-#endif
-        }
-
-        fu.get();
-
-        //std::cout << IoStream::lock << "recv: recved PSI seed " << theirHashingSeeds << std::endl << IoStream::unlock;
+        chl0.recv((u8*)&theirHashingSeeds, sizeof(block));
 
         mHashingSeed = myHashSeeds ^ theirHashingSeeds;
 
-        otRecv.init(mIndex.mBins.size() + mIndex.mStash.size(), prng, chl0);
-        mOtRecv = &otRecv;
+        mOtRecvs.resize(chls.size());
+        std::thread otThrd[chls.size()];
+        for (u64 i = 0; i < chls.size(); i++) {
+            block otSeed = prng.get<block>();
+            otThrd[i] = std::thread([i, otSeed, this, &chls]() {
+                mOtRecvs[i].configure(false, 40, 128);
+                PRNG otPrng(otSeed);
+
+                DefaultBaseOT baseBase;
+                std::array<block, 128> baseBaseOT;
+                BitVector baseBaseChoice(128);
+                baseBaseChoice.randomize(otPrng);
+                baseBase.receive(baseBaseChoice, baseBaseOT, otPrng, chls[i]);
+
+                IknpOtExtSender base;
+                base.setBaseOts(baseBaseOT, baseBaseChoice, chls[i]);
+                std::vector<std::array<block, 2>> baseOT(mOtRecvs[i].getBaseOTCount());
+                base.send(baseOT, otPrng, chls[i]);
+
+                mOtRecvs[i].setBaseOts(baseOT, otPrng, chls[i]);
+
+                mOtRecvs[i].init(mIndex.mBins.size() + mIndex.mStash.size(), otPrng, chls[i]);
+            });
+        }
+
+        for (u64 i = 0; i < chls.size(); i++) {
+            otThrd[i].join();
+        }
     }
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, Channel & chl)
@@ -120,6 +104,7 @@ throw std::runtime_error("base OTs must be set or enable base OTs and IKNP in li
         setTimePoint("kkrt.R Online.Start");
 
         auto& chl = chls[0];
+        auto mOtRecv = &mOtRecvs[0];
 
         //u64 codeWordSize = get_codeword_size(std::max<u64>(mSenderSize, mRecverSize)); //by byte
         u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte

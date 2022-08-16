@@ -483,15 +483,13 @@ void kkrtSend(
                     } 
                 }
 
-                KkrtNcoOtSender otSend;
-
                 KkrtPsiSender sendPSIs;
                 sendPSIs.setTimer(gTimer);
 
                 sendChls[0].asyncSend(dummy, 1);
                 sendChls[0].recv(dummy, 1);
 
-                sendPSIs.init(setSize, setSize, params.mStatSecParam, sendChls, otSend, prng.get<block>());
+                sendPSIs.init(setSize, setSize, params.mStatSecParam, sendChls, prng.get<block>());
 
                 //sendChls[0].asyncSend(dummy, 1);
                 //sendChls[0].recv(dummy, 1);
@@ -551,8 +549,6 @@ void kkrtRecv(
                     } 
                 }
 
-                KkrtNcoOtReceiver otRecv;
-
                 KkrtPsiReceiver recvPSIs;
                 recvPSIs.setTimer(gTimer);
 
@@ -561,13 +557,11 @@ void kkrtRecv(
                 gTimer.reset();
                 chls[0].asyncSend(dummy, 1);
 
-
-
                 Timer timer;
 
                 auto start = timer.setTimePoint("start");
 
-                recvPSIs.init(setSize, setSize, params.mStatSecParam, chls, otRecv, prng.get<block>());
+                recvPSIs.init(setSize, setSize, params.mStatSecParam, chls, prng.get<block>());
 
                 //chls[0].asyncSend(dummy, 1);
                 //chls[0].recv(dummy, 1);

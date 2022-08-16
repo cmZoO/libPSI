@@ -380,22 +380,7 @@ namespace osuCrypto
 
         Matrix<u8> myMaskBuff(mSenderSize * mParams.mNumHashes, maskSize);
 
-        u64 stepSize = 1 << 10;
-
-        std::atomic<u64> recvedIdx(0);
-        std::mutex mtx_syn;
-        std::condition_variable cv_syn;
-        auto thrd = std::thread([&]() {
-            while (recvedIdx < numBins)
-            {
-                auto currentStepSize = std::min(stepSize, numBins - recvedIdx);
-                mOtSender->recvCorrection(chl, currentStepSize);
-                recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
-                cv_syn.notify_one();
-            }
-        });
-
-
+        
         setTimePoint("kkrt.S Online.hashing start");
 
         std::vector<u64> binIndex(numBins + 1);
@@ -403,20 +388,44 @@ namespace osuCrypto
         std::vector<u8> binHash(mParams.mNumHashes * numBins);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
 
+        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.S Online.linear start");
-
-        std::unique_lock<std::mutex> lck(mtx_syn);
-        for (u64 bIdx = 0; bIdx < numBins; bIdx++) {
-            cv_syn.wait(lck, [bIdx, &recvedIdx]{
-                return bIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+        std::thread oprfThrd[chls.size()];
+        u64 thrdBinSize = std::ceil(1.0 * numBins / chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto binStart = pid * thrdBinSize;
+            auto binEnd = std::min(numBins, binStart + thrdBinSize);
+            oprfThrd[pid] = std::thread([pid, binStart, &chls, binEnd, &inputs, stepSize, this, &myMaskBuff, &binIndex, &binIdx, &binHash]() {
+                std::atomic<u64> recvedIdx(binStart);
+                std::mutex mtx_syn;
+                std::condition_variable cv_syn;
+                auto thrd = std::thread([&]() {
+                    while (recvedIdx < binEnd)
+                    {
+                        auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
+                        mOtSenders[pid].recvCorrection(chls[pid], currentStepSize);
+                        recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
+                        cv_syn.notify_one();
+                    }
+                });
+                std::unique_lock<std::mutex> lck(mtx_syn);
+                for (u64 bIdx = binStart; bIdx < binEnd; bIdx++) {
+                    cv_syn.wait(lck, [bIdx, &recvedIdx]{
+                        return bIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+                    });
+                    for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+                        auto inputIdx = binIdx[start];
+                        auto inputHash = binHash[start];
+                        mOtSenders[pid].encode(bIdx - binStart, &inputs[inputIdx], 
+                                myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
+                                myMaskBuff.stride());
+                    }
+                }
+                thrd.join();
             });
-            for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
-                auto inputIdx = binIdx[start];
-                auto inputHash = binHash[start];
-                mOtSender->encode(bIdx, &inputs[inputIdx], 
-                        myMaskBuff.data() + myMaskBuff.stride() * (mPermute[inputIdx] * mParams.mNumHashes + inputHash), 
-                        myMaskBuff.stride());
-            }
+        }
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            oprfThrd[pid].join();
         }
 
         setTimePoint("kkrt.S Online.send start");
@@ -433,8 +442,6 @@ namespace osuCrypto
 
         // u8 dummy[1];
         // chl.send(dummy, 1);
-
-        thrd.join();
     }
 }
 

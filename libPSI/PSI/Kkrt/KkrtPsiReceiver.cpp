@@ -106,81 +106,59 @@ namespace osuCrypto
         auto& chl = chls[0];
         auto mOtRecv = &mOtRecvs[0];
 
-        //u64 codeWordSize = get_codeword_size(std::max<u64>(mSenderSize, mRecverSize)); //by byte
         u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte
 
-        //insert item to corresponding bin
         mIndex.insert(inputs, mHashingSeed);
 
 
-        //we use 4 unordered_maps, we put the mask to the corresponding unordered_map
-        //that indicates of the hash function index 0,1,2. and the last unordered_maps is used for stash bin
         std::array<std::unordered_map<u64, std::pair<block, u64>>, 3> localMasks;
-        //store the masks of elements that map to bin by h0
         localMasks[0].reserve(mIndex.mBins.size()); //upper bound of # mask
-        //store the masks of elements that map to bin by h1
         localMasks[1].reserve(mIndex.mBins.size());
-        //store the masks of elements that map to bin by h2
         localMasks[2].reserve(mIndex.mBins.size());
+        std::vector<std::mutex> mtx_syn(3);
 
 
         //======================Bucket BINs (not stash)==========================
-
-        //pipelining the execution of the online phase (i.e., OT correction step) into multiple batches
-        auto binStart = 0;
-        auto binEnd = mIndex.mBins.size();
+        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.R Online.computeBucketMask start");
-        u64 stepSize = 1 << 10;
-
-        //for each batch
-        for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize)
-        {
-            // compute the size of current step & end index.
-            auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
-            auto stepEnd = stepIdx + currentStepSize;
-
-            // for each bin, do encoding
-            for (u64 bIdx = stepIdx, i = 0; bIdx < stepEnd; bIdx++, ++i)
-            {
-                //block mask(ZeroBlock);
-                auto& bin = mIndex.mBins[bIdx];
-
-                if (bin.isEmpty() == false)
+        std::thread oprfThrd[chls.size()];
+        u64 thrdBinSize = std::ceil(1.0 * mIndex.mBins.size() / chls.size());
+        std::cout << thrdBinSize * chls.size() << " " << mIndex.mBins.size() << std::endl;
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto binStart = pid * thrdBinSize;
+            auto binEnd = std::min(mIndex.mBins.size(), binStart + thrdBinSize);
+            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, stepSize, this, &localMasks, &inputs]() {
+                for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize)
                 {
-                    auto idx = bin.idx();
-
-                    // get the smallest hash function index that maps this item to this bin.
-                    auto hIdx = CuckooIndex<>::minCollidingHashIdx(bIdx,mIndex.mHashes[idx], 3, mIndex.mBins.size());
-
-                    auto& item = inputs[idx];
-
-                    block encoding = ZeroBlock;
-
-                    mOtRecv->encode(bIdx, &item, &encoding, maskByteSize);
-
-                    //std::cout << "r input[" << idx << "] = " << inputs[idx] << " h = " << (int)hIdx << " bIdx = " << bIdx << " -> " << *(u64*)&encoding << std::endl;
-
-                    //store my mask into corresponding buff at the permuted position
-                    localMasks[hIdx].emplace(encoding.as<u64>()[0], std::pair<block, u64>(encoding, idx));
+                    auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
+                    auto stepEnd = stepIdx + currentStepSize;
+                    for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
+                    {
+                        auto& bin = mIndex.mBins[bIdx];
+                        if (bin.isEmpty() == false)
+                        {
+                            auto idx = bin.idx();
+                            auto hIdx = CuckooIndex<>::minCollidingHashIdx(bIdx,mIndex.mHashes[idx], 3, mIndex.mBins.size());
+                            auto& item = inputs[idx];
+                            block encoding = ZeroBlock;
+                            mOtRecvs[pid].encode(bIdx - binStart, &item, &encoding, maskByteSize);
+                            mtx_syn[hIdx].lock();
+                            localMasks[hIdx].emplace(encoding.as<u64>()[0], std::pair<block, u64>(encoding, idx));
+                            mtx_syn[hIdx].unlock();
+                        }
+                        else
+                        {
+                            mOtRecvs[pid].zeroEncode(bIdx);
+                        }
+                    }
+                    mOtRecvs[pid].sendCorrection(chls[pid], currentStepSize);
                 }
-                else
-                {
-                    // no item for this bin, just use a dummy.
-                    mOtRecv->zeroEncode(bIdx);
-                }
-            }
-            // send the OT correction masks for the current step
-
-            mOtRecv->sendCorrection(chl, currentStepSize);
-        }// Done with compute the masks for the main set of bins.
+            });
+        }
 
         setTimePoint("kkrt.R Online.sendBucketMask done");
-
-
-        //u64 sendCount = (mSenderSize + stepSize - 1) / stepSize;
         auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
         std::array<u64, 3> idxs{ 0,0,0 };
-
 
         auto numRegions = (mSenderSize  + stepSize -1) / stepSize;
         auto masksPerRegion = stepSize * 3;
@@ -225,6 +203,9 @@ namespace osuCrypto
         }
         setTimePoint("kkrt.R Online.Bucket done");
 
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            oprfThrd[pid].join();
+        }
         // u8 dummy[1];
         // chl.recv(dummy, 1);
     }

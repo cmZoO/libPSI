@@ -31,6 +31,8 @@ namespace osuCrypto
         CuckooParam mParams;
 		block mHashingSeed;
 
+        u64 stepSize = 1 << 10;
+
         std::vector<KkrtNcoOtSender> mOtSenders;
 
 		void init(u64 senderSize, u64 recverSize, u64 statSecParam, span<Channel> chls, block seed);

@@ -60,7 +60,7 @@ namespace osuCrypto
         chl.recv((u8*)&theirHashingSeeds, sizeof(block));
         mHashingSeed = myHashSeeds ^ theirHashingSeeds;
 
-        mParams = CuckooIndex<>::selectParams(std::max<u64>(200, recverSize), statSec, 0,3);
+        mParams = CuckooParam{ 0, 1.27, 3, std::max<u64>(200, recverSize) };
         if (mParams.mNumHashes != 3) throw std::runtime_error(LOCATION);
 
         mOtSenders.resize(chls.size());
@@ -368,14 +368,13 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S offline.perm done");
 
-        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.S Online.linear start");
         std::thread oprfThrd[chls.size()];
         u64 thrdBinSize = std::ceil(1.0 * numBins / chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto binStart = pid * thrdBinSize;
             auto binEnd = std::min(numBins, binStart + thrdBinSize);
-            oprfThrd[pid] = std::thread([pid, binStart, &chls, binEnd, &inputs, stepSize, this, &myMaskBuff, &binIndex, &binIdx, &binHash]() {
+            oprfThrd[pid] = std::thread([pid, binStart, &chls, binEnd, &inputs, this, &myMaskBuff, &binIndex, &binIdx, &binHash]() {
                 std::atomic<u64> recvedIdx(binStart);
                 std::mutex mtx_syn, mtx_que;
                 std::condition_variable cv_syn;
@@ -446,7 +445,7 @@ namespace osuCrypto
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto inputStart = pid * thrdDataSize;
             auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
-            maskThrd[pid] = std::thread([pid, inputStart, &chls, inputEnd, &myMaskBuff, stepSize, this]() {
+            maskThrd[pid] = std::thread([pid, inputStart, &chls, inputEnd, &myMaskBuff, this]() {
                 for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)
                 {
                     auto currentStepSize = std::min(stepSize, inputEnd - inputId);
@@ -483,14 +482,13 @@ namespace osuCrypto
         std::vector<u8> binHash(mParams.mNumHashes * numBins);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, Matrix<u8>(), mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
 
-        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.S Online.linear start");
         std::thread oprfThrd[chls.size()];
         u64 thrdBinSize = std::ceil(1.0 * numBins / chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto binStart = pid * thrdBinSize;
             auto binEnd = std::min(numBins, binStart + thrdBinSize);
-            oprfThrd[pid] = std::thread([pid, binStart, &chls, &mchls, binEnd, &inputs, maskSize, stepSize, this, &binIndex, &binIdx, &binHash]() {
+            oprfThrd[pid] = std::thread([pid, binStart, &chls, &mchls, binEnd, &inputs, maskSize, this, &binIndex, &binIdx, &binHash]() {
                 std::atomic<u64> recvedIdx(binStart);
                 std::mutex mtx_syn, mtx_que;
                 std::condition_variable cv_syn;
@@ -563,7 +561,7 @@ namespace osuCrypto
 
                 mchls[pid].asyncSendCopy(buffMask.data(), mParams.mNumHashes * sizeof(u64));
                 for (int i = 1; i < mParams.mNumHashes; i++) {
-                    mchls[pid].asyncSendCopy(myMaskBuff.data() + myMaskBuff.stride() * i, stepSize * maskSize + 1);
+                    mchls[pid].asyncSendCopy(myMaskBuff.data() + myMaskBuff.stride() * i, buffMask[i] * maskSize);
                 }
                 thrd.join();
             });

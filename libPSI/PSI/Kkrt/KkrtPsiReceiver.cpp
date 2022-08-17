@@ -46,7 +46,8 @@ namespace osuCrypto
         mSenderSize = senderSize;
         mRecverSize = recverSize;
 
-        mIndex.init(std::max<u64>(200, recverSize), statSecParam, 0,3);
+        CuckooParam param = CuckooParam{ 0, 1.27, 3, std::max<u64>(200, recverSize) };
+        mIndex.init(param);
 
         setTimePoint("kkrt.Recv.Init.start");
         PRNG prng(seed);
@@ -99,7 +100,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls)
     {
-        std::cout << "use stable version" << std::endl;
+        // std::cout << "use stable version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");
@@ -116,14 +117,13 @@ namespace osuCrypto
         std::vector<std::mutex> mtx_syn(3);
 
         //======================Bucket BINs (not stash)==========================
-        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.R Online.computeBucketMask start");
         std::thread oprfThrd[chls.size()];
         u64 thrdBinSize = std::ceil(1.0 * mIndex.mBins.size() / chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto binStart = pid * thrdBinSize;
             auto binEnd = std::min(mIndex.mBins.size(), binStart + thrdBinSize);
-            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, stepSize, this, &localMasks, &inputs]() {
+            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, this, &localMasks, &inputs]() {
                 for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize)
                 {
                     auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
@@ -163,7 +163,7 @@ namespace osuCrypto
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto inputStart = pid * thrdDataSize;
             auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
-            maskThrd[pid] = std::thread([pid, inputStart, &thrdIntersections, maskByteSize, &chls, inputEnd, stepSize, &localMasks, this]() {
+            maskThrd[pid] = std::thread([pid, inputStart, &thrdIntersections, maskByteSize, &chls, inputEnd, &localMasks, this]() {
                 Matrix<u8> myMaskBuff(stepSize * mIndex.mParams.mNumHashes, maskByteSize);
                 for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)
                 {
@@ -220,14 +220,13 @@ namespace osuCrypto
         std::vector<std::mutex> mtx_syn(3);
 
         //======================Bucket BINs (not stash)==========================
-        u64 stepSize = 1 << 14;
         setTimePoint("kkrt.R Online.computeBucketMask start");
         std::thread oprfThrd[chls.size()];
         u64 thrdBinSize = std::ceil(1.0 * mIndex.mBins.size() / chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto binStart = pid * thrdBinSize;
             auto binEnd = std::min(mIndex.mBins.size(), binStart + thrdBinSize);
-            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, stepSize, this, &localMasks, &inputs]() {
+            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, this, &localMasks, &inputs]() {
                 for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize)
                 {
                     auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
@@ -266,7 +265,7 @@ namespace osuCrypto
         std::thread maskThrd[chls.size()];
         std::vector<std::vector<u64>> thrdIntersections(chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
-            maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, stepSize, &localMasks, this]() {
+            maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, &localMasks, this]() {
                 Matrix<u8> myMaskBuff(1, stepSize * maskByteSize + 1);
                 auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
                 for (;;) {
@@ -288,8 +287,8 @@ namespace osuCrypto
                     }
                 }
                 u64 buffMask[3];
-                mchls[pid].recv(buffMask, 3 * sizeof(u64));
-                for (u64 current_hash = 0; current_hash < 3; current_hash++) {
+                mchls[pid].recv(buffMask, mIndex.mParams.mNumHashes * sizeof(u64));
+                for (u64 current_hash = 0; current_hash < mIndex.mParams.mNumHashes; current_hash++) {
                     auto data = myMaskBuff.data();
                     u64 idxs;
                     for (u64 i = 0; i < buffMask[current_hash]; i++) {
@@ -301,8 +300,8 @@ namespace osuCrypto
                         }
                         data += maskByteSize;
                     }
-                    if (current_hash < 2) {
-                        mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize + 1);
+                    if (current_hash < mIndex.mParams.mNumHashes - 1) {
+                        mchls[pid].recv(myMaskBuff.data(), buffMask[current_hash + 1] * maskByteSize);
                     }     
                 }
             });

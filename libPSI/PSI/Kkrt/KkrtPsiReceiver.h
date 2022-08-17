@@ -29,6 +29,8 @@ namespace osuCrypto
 
         block mHashingSeed;
 
+        u64 stepSize = 1 << 10;
+
         std::vector<PRNG> prngs;
         
         void init(u64 senderSize, u64 recverSize, u64 statSecParam, Channel chl0, block seed);

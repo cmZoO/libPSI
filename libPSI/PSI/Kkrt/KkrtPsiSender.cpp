@@ -91,12 +91,6 @@ namespace osuCrypto
         }
         
         setTimePoint("kkrt.S offline.perm start");
-        mPermute.resize(mSenderSize);
-        for (u64 i = 0; i < mSenderSize; ++i) mPermute[i] = i;
-
-        std::shuffle(mPermute.begin(), mPermute.end(), mPrng);
-
-        setTimePoint("kkrt.S offline.perm done");
 
         for (u64 i = 0; i < chls.size(); i++) {
             otThrd[i].join();
@@ -215,16 +209,6 @@ namespace osuCrypto
                 mItemToBinMap(itemIdx6, 1) = bIdx61 | (c61 * u64(-1));
                 mItemToBinMap(itemIdx7, 1) = bIdx71 | (c71 * u64(-1));
 
-                // if we got a collision, then fill the final mask locations with junk data
-                prngs[0].get(masks.data() + (perm[itemIdx0] * mNumHashFunctions + 1) * masks.stride(), c01 * masks.stride());
-                prngs[1].get(masks.data() + (perm[itemIdx1] * mNumHashFunctions + 1) * masks.stride(), c11 * masks.stride());
-                prngs[2].get(masks.data() + (perm[itemIdx2] * mNumHashFunctions + 1) * masks.stride(), c21 * masks.stride());
-                prngs[3].get(masks.data() + (perm[itemIdx3] * mNumHashFunctions + 1) * masks.stride(), c31 * masks.stride());
-                prngs[4].get(masks.data() + (perm[itemIdx4] * mNumHashFunctions + 1) * masks.stride(), c41 * masks.stride());
-                prngs[5].get(masks.data() + (perm[itemIdx5] * mNumHashFunctions + 1) * masks.stride(), c51 * masks.stride());
-                prngs[6].get(masks.data() + (perm[itemIdx6] * mNumHashFunctions + 1) * masks.stride(), c61 * masks.stride());
-                prngs[7].get(masks.data() + (perm[itemIdx7] * mNumHashFunctions + 1) * masks.stride(), c71 * masks.stride());
-
 
                 // repeat the process with the last hash function
                 auto bIdx02 = CuckooIndex<>::getHash(hashs[0], 2, numBins);
@@ -255,15 +239,6 @@ namespace osuCrypto
                 mItemToBinMap(itemIdx5, 2) = bIdx52 | (c52 * u64(-1));
                 mItemToBinMap(itemIdx6, 2) = bIdx62 | (c62 * u64(-1));
                 mItemToBinMap(itemIdx7, 2) = bIdx72 | (c72 * u64(-1));
-
-                prngs[0].get(masks.data() + (perm[itemIdx0] * mNumHashFunctions + 2) * masks.stride(), c01 * masks.stride());
-                prngs[1].get(masks.data() + (perm[itemIdx1] * mNumHashFunctions + 2) * masks.stride(), c11 * masks.stride());
-                prngs[2].get(masks.data() + (perm[itemIdx2] * mNumHashFunctions + 2) * masks.stride(), c21 * masks.stride());
-                prngs[3].get(masks.data() + (perm[itemIdx3] * mNumHashFunctions + 2) * masks.stride(), c31 * masks.stride());
-                prngs[4].get(masks.data() + (perm[itemIdx4] * mNumHashFunctions + 2) * masks.stride(), c41 * masks.stride());
-                prngs[5].get(masks.data() + (perm[itemIdx5] * mNumHashFunctions + 2) * masks.stride(), c51 * masks.stride());
-                prngs[6].get(masks.data() + (perm[itemIdx6] * mNumHashFunctions + 2) * masks.stride(), c61 * masks.stride());
-                prngs[7].get(masks.data() + (perm[itemIdx7] * mNumHashFunctions + 2) * masks.stride(), c71 * masks.stride());
             }
 
             // in case the input does not divide evenly by 8, handle the last few items.
@@ -284,7 +259,6 @@ namespace osuCrypto
 
                     u8 c = ((u8)collision & 1);
                     mItemToBinMap(itemIdx, h) = bIdx | c * u64(-1);
-                    prng.get(masks.data() + (perm[itemIdx] * mNumHashFunctions + h) * masks.stride(), c * masks.stride());
                 }
             }
         }
@@ -329,7 +303,7 @@ namespace osuCrypto
         block hashingSeed,
         u64 numBins,
         PRNG& prng,
-        MatrixView<u8> masks,
+        Matrix<u8> myMaskBuff,
         span<u64> perm,
         u64 numHashes,
         span<u64> binIndex,
@@ -337,14 +311,20 @@ namespace osuCrypto
         span<u8> binHash
     ) {
         Matrix<u64> binIdxs(items.size(), numHashes);
-        hashItems(items, binIdxs, hashingSeed, numBins, prng, masks, perm);
+        hashItems(items, binIdxs, hashingSeed, numBins, prng, myMaskBuff, perm);
         
         for (u64 i = 0; i < items.size(); i++) {
             for (u64 j = 0; j < numHashes; j++) {
-                auto bid = binIdxs(i, j);
-                if (bid != -1) {
-                    binIndex[bid]++;
-                } 
+                auto& bid = binIdxs(i, j);
+                if (bid == -1) {
+                    for (;;) {
+                        bid = prng.get<u64>() % numBins;
+                        if (bid != binIdxs(i, (j+1)%numHashes) &&
+                            bid != binIdxs(i, (j+2)%numHashes)) 
+                            break;
+                    }
+                }
+                binIndex[bid]++;
             }
         }
         for (u64 i = 1; i < numBins; i++) {
@@ -354,17 +334,13 @@ namespace osuCrypto
         for (u64 i = 0; i < items.size(); i++) {
             for (u64 j = 0; j < numHashes; j++) {
                 auto bid = binIdxs(i, j);
-                if (bid != -1) {
-                    auto tIndex = --binIndex[bid];
-                    binIdx[tIndex] = i;
-                    binHash[tIndex] = j;
-                }
+                if (bid == -1) std::cout << "error" << std::endl;
+                auto tIndex = --binIndex[bid];
+                binIdx[tIndex] = i;
+                binHash[tIndex] = j;
             }
         }
     }
-
-
-
 
 
     void KkrtPsiSender::sendInput(span<block> inputs, span<Channel> chls)
@@ -379,13 +355,18 @@ namespace osuCrypto
 
         Matrix<u8> myMaskBuff(mSenderSize * mParams.mNumHashes, maskSize);
 
-        
         setTimePoint("kkrt.S Online.hashing start");
 
         std::vector<u64> binIndex(numBins + 1);
         std::vector<u64> binIdx(mParams.mNumHashes * numBins);
         std::vector<u8> binHash(mParams.mNumHashes * numBins);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
+
+        mPermute.resize(mSenderSize);
+        for (u64 i = 0; i < mSenderSize; ++i) mPermute[i] = i;
+        std::shuffle(mPermute.begin(), mPermute.end(), mPrng);
+
+        setTimePoint("kkrt.S offline.perm done");
 
         u64 stepSize = 1 << 14;
         setTimePoint("kkrt.S Online.linear start");
@@ -479,6 +460,118 @@ namespace osuCrypto
             maskThrd[pid].join();
         }
         
+        setTimePoint("kkrt.S Online.done start");
+
+    }
+
+
+
+    void KkrtPsiSender::sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls)
+    {
+        if (inputs.size() != mSenderSize)
+            throw std::runtime_error("rt error at " LOCATION);
+
+        setTimePoint("kkrt.S Online.online start");
+
+        u64 maskSize = u64(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8; //by byte
+        auto numBins = mParams.numBins();
+
+        setTimePoint("kkrt.S Online.hashing start");
+
+        std::vector<u64> binIndex(numBins + 1);
+        std::vector<u64> binIdx(mParams.mNumHashes * numBins);
+        std::vector<u8> binHash(mParams.mNumHashes * numBins);
+        hashBinItems(inputs, mHashingSeed, numBins, mPrng, Matrix<u8>(), mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
+
+        u64 stepSize = 1 << 14;
+        setTimePoint("kkrt.S Online.linear start");
+        std::thread oprfThrd[chls.size()];
+        u64 thrdBinSize = std::ceil(1.0 * numBins / chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto binStart = pid * thrdBinSize;
+            auto binEnd = std::min(numBins, binStart + thrdBinSize);
+            oprfThrd[pid] = std::thread([pid, binStart, &chls, &mchls, binEnd, &inputs, maskSize, stepSize, this, &binIndex, &binIdx, &binHash]() {
+                std::atomic<u64> recvedIdx(binStart);
+                std::mutex mtx_syn, mtx_que;
+                std::condition_variable cv_syn;
+                std::queue<u8 *> recvQue;
+                u64 corByte = 456 / 8;
+                // u64 corByte = sizeof(block) * mOtSenders[pid].mGens.size() / 128;
+                auto thrd = std::thread([&]() {
+                    while (recvedIdx < binEnd)
+                    {
+                        auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
+                        u8* buffer = new u8[currentStepSize * corByte];
+                        // recv指定长度
+                        chls[pid].recv(buffer, currentStepSize * corByte);
+
+                        mtx_que.lock();
+                        recvQue.push(buffer);
+                        mtx_que.unlock();
+
+                        recvedIdx.fetch_add(currentStepSize, std::memory_order::memory_order_release);
+                        cv_syn.notify_one();
+                    }
+                });
+                std::unique_lock<std::mutex> lck(mtx_syn);
+                Matrix<u8> myMaskBuff(mParams.mNumHashes, stepSize * maskSize + 1);
+                std::vector<u64> buffMask(mParams.mNumHashes, 0);
+
+                for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize) {
+                    cv_syn.wait(lck, [stepIdx, &recvedIdx]{
+                        return stepIdx < recvedIdx.load(std::memory_order::memory_order_acquire);
+                    });
+                    auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
+                                            
+                    mOtSenders[pid].init(currentStepSize, prngs[pid], chls[pid]);
+                    mtx_que.lock();
+                    u8 * buffer = recvQue.front();
+                    recvQue.pop();
+                    mtx_que.unlock();
+
+                    u64 otCorStride = mOtSenders[pid].mCorrectionVals.stride();
+                    auto dest = mOtSenders[pid].mCorrectionVals.begin() + (mOtSenders[pid].mCorrectionIdx * otCorStride);
+                    for (int i = 0; i < currentStepSize; i++) {
+                        memcpy((u8*)&*dest, buffer + i * corByte, corByte);
+                        dest += otCorStride;
+                    }
+                    mOtSenders[pid].mCorrectionIdx += currentStepSize;
+
+                    delete[] buffer;
+
+                    auto stepEnd = stepIdx + currentStepSize;
+                    for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
+                    {    
+                        for (u64 start = binIndex[bIdx]; start < binIndex[bIdx + 1]; start++) {
+                            auto inputIdx = binIdx[start];
+                            auto inputHash = binHash[start];
+                            u8* dest = (u8*)&*(myMaskBuff.data() + myMaskBuff.stride() * inputHash);
+                            mOtSenders[pid].encode(bIdx - stepIdx, &inputs[inputIdx], 
+                                    dest + buffMask[inputHash] * maskSize, 
+                                    maskSize);
+                            buffMask[inputHash]++;
+                            if (buffMask[inputHash] == stepSize) {
+                                myMaskBuff(inputHash, stepSize * maskSize) = inputHash;
+                                mchls[pid].asyncSendCopy(myMaskBuff.data() + myMaskBuff.stride() * inputHash, stepSize * maskSize + 1);
+                                buffMask[inputHash] = 0;
+                            }
+                        }
+                    }
+                }
+                myMaskBuff(0, stepSize * maskSize) = u8(-1);
+                mchls[pid].asyncSendCopy(myMaskBuff.data(), stepSize * maskSize + 1);
+
+                mchls[pid].asyncSendCopy(buffMask.data(), mParams.mNumHashes * sizeof(u64));
+                for (int i = 1; i < mParams.mNumHashes; i++) {
+                    mchls[pid].asyncSendCopy(myMaskBuff.data() + myMaskBuff.stride() * i, stepSize * maskSize + 1);
+                }
+                thrd.join();
+            });
+        }
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            oprfThrd[pid].join();
+        }
+
         setTimePoint("kkrt.S Online.done start");
 
     }

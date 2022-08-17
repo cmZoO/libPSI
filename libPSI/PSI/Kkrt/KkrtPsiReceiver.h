@@ -23,7 +23,7 @@ namespace osuCrypto
 
         u64 mRecverSize,mSenderSize,mStatSecParam;
         std::vector<u64> mIntersection;
-        CuckooIndex<NotThreadSafe> mIndex;
+        CuckooIndex<ThreadSafe> mIndex;
 
         std::vector<KkrtNcoOtReceiver> mOtRecvs;
 
@@ -38,6 +38,7 @@ namespace osuCrypto
         void sendInput(span<block> inputs, Channel& chl);
         void sendInput(span<block> inputs, span<Channel> chls);
 
+        void sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls);
     };
 
 

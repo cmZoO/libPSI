@@ -42,7 +42,7 @@ namespace osuCrypto
 		void sendInput(span<block> inputs, Channel& chl);
 		void sendInput(span<block> inputs, span<Channel> chls);
 
-
+		void sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls);
 	};
 
 }

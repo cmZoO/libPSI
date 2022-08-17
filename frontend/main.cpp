@@ -238,9 +238,11 @@ void benchmark(
 			auto mode = params.mIdx ? EpMode::Server : EpMode::Client;
 			Endpoint ep(ios, params.mIP, mode);
 			params.mChls.resize(*std::max_element(params.mNumThreads.begin(), params.mNumThreads.end()));
-
-			for (u64 i = 0; i < params.mChls.size(); ++i)
+			params.mChls2.resize(*std::max_element(params.mNumThreads.begin(), params.mNumThreads.end()));
+			for (u64 i = 0; i < params.mChls.size(); ++i) {
 				params.mChls[i] = ep.addChannel();
+				params.mChls2[i] = ep.addChannel();
+			}
 
             if (params.mIdx == 0)
             {
@@ -254,11 +256,14 @@ void benchmark(
 				sendProtol(params);
 			}
 
-			for (u64 i = 0; i < params.mChls.size(); ++i)
+			for (u64 i = 0; i < params.mChls.size(); ++i) {
 				params.mChls[i].close();
+				params.mChls2[i].close();
+			}
 
 
 			params.mChls.clear();
+			params.mChls2.clear();
 			ep.stop();
 		};
 

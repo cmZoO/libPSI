@@ -99,6 +99,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls)
     {
+        std::cout << "use stable version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");
@@ -186,6 +187,123 @@ namespace osuCrypto
                             data += maskByteSize;
                         }
                     }
+                }
+            });
+        }
+
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            maskThrd[pid].join();
+            mIntersection.insert(mIntersection.end(), thrdIntersections[pid].begin(), thrdIntersections[pid].end());
+        }
+
+        setTimePoint("kkrt.R Online.Bucket done");
+
+    }
+
+
+    void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls)
+    {
+        std::cout << "use memory optimial version" << std::endl;
+        // check that the number of inputs is as expected.
+        if (inputs.size() != mRecverSize)
+            throw std::runtime_error("inputs.size() != mN");
+        setTimePoint("kkrt.R Online.Start");
+
+        u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte
+
+        mIndex.insert(inputs, mHashingSeed);
+
+        std::array<std::unordered_map<u64, std::pair<block, u64>>, 3> localMasks;
+        localMasks[0].reserve(mIndex.mBins.size()); //upper bound of # mask
+        localMasks[1].reserve(mIndex.mBins.size());
+        localMasks[2].reserve(mIndex.mBins.size());
+        std::vector<std::mutex> mtx_syn(3);
+
+        //======================Bucket BINs (not stash)==========================
+        u64 stepSize = 1 << 14;
+        setTimePoint("kkrt.R Online.computeBucketMask start");
+        std::thread oprfThrd[chls.size()];
+        u64 thrdBinSize = std::ceil(1.0 * mIndex.mBins.size() / chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto binStart = pid * thrdBinSize;
+            auto binEnd = std::min(mIndex.mBins.size(), binStart + thrdBinSize);
+            oprfThrd[pid] = std::thread([pid, binStart, maskByteSize, binEnd, &chls, &mtx_syn, stepSize, this, &localMasks, &inputs]() {
+                for (u64 stepIdx = binStart; stepIdx < binEnd; stepIdx += stepSize)
+                {
+                    auto currentStepSize = std::min(stepSize, binEnd - stepIdx);
+                    auto stepEnd = stepIdx + currentStepSize;
+                    mOtRecvs[pid].init(currentStepSize, prngs[pid], chls[pid]);
+                    for (u64 bIdx = stepIdx; bIdx < stepEnd; bIdx++)
+                    {
+                        auto& bin = mIndex.mBins[bIdx];
+                        if (bin.isEmpty() == false)
+                        {
+                            auto idx = bin.idx();
+                            auto hIdx = CuckooIndex<>::minCollidingHashIdx(bIdx,mIndex.mHashes[idx], 3, mIndex.mBins.size());
+                            auto& item = inputs[idx];
+                            block encoding = ZeroBlock;
+                            mOtRecvs[pid].encode(bIdx - stepIdx, &item, &encoding, maskByteSize);
+                            mtx_syn[hIdx].lock();
+                            localMasks[hIdx].emplace(encoding.as<u64>()[0], std::pair<block, u64>(encoding, idx));
+                            mtx_syn[hIdx].unlock();
+                        }
+                        else
+                        {
+                            mOtRecvs[pid].zeroEncode(bIdx - stepIdx);
+                        }
+                    }
+                    mOtRecvs[pid].sendCorrection(chls[pid], currentStepSize);
+                }
+            });
+        }
+
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            oprfThrd[pid].join();
+        }
+
+        setTimePoint("kkrt.R Online.sendBucketMask done");
+
+        std::thread maskThrd[chls.size()];
+        std::vector<std::vector<u64>> thrdIntersections(chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, stepSize, &localMasks, this]() {
+                Matrix<u8> myMaskBuff(1, stepSize * maskByteSize + 1);
+                auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
+                for (;;) {
+                    mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize + 1);
+                    u8 hashNum = myMaskBuff(0, stepSize * maskByteSize);
+                    if (hashNum == u8(-1)) {
+                        break;
+                    }
+                    auto data = myMaskBuff.data();
+                    u64 idxs;
+                    for (u64 i = 0; i < stepSize; i++) {
+                        memcpy(&idxs, data, idxSize);
+                        auto iter = localMasks[hashNum].find(idxs);
+                        if (iter != localMasks[hashNum].end() && memcmp(&iter->second.first, data, maskByteSize) == 0)
+                        {
+                            thrdIntersections[pid].emplace_back(iter->second.second);
+                        }
+                        data += maskByteSize;
+                    }
+                }
+                u64 buffMask[3];
+                mchls[pid].recv(buffMask, 3 * sizeof(u64));
+                for (u64 current_hash = 0; current_hash < 3; current_hash++) {
+                    auto data = myMaskBuff.data();
+                    u64 idxs;
+                    for (u64 i = 0; i < buffMask[current_hash]; i++) {
+                        memcpy(&idxs, data, idxSize);
+                        auto iter = localMasks[current_hash].find(idxs);
+                        if (iter != localMasks[current_hash].end() && memcmp(&iter->second.first, data, maskByteSize) == 0)
+                        {
+                            thrdIntersections[pid].emplace_back(iter->second.second);
+                        }
+                        data += maskByteSize;
+                    }
+                    if (current_hash < 2) {
+                        mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize + 1);
+                    }     
                 }
             });
         }

@@ -470,6 +470,7 @@ void kkrtSend(
         for (auto cc : params.mNumThreads)
         {
             std::vector<Channel> sendChls = params.getChannels(cc);
+            std::vector<Channel> maskChls = params.getChannels2(cc);
 
             for (u64 jj = 0; jj < params.mTrials; jj++)
             {
@@ -494,16 +495,13 @@ void kkrtSend(
                 //sendChls[0].asyncSend(dummy, 1);
                 //sendChls[0].recv(dummy, 1);
 
-                sendPSIs.sendInput(sendSet, sendChls);
+                // sendPSIs.sendInput(sendSet, sendChls);
+                sendPSIs.sendInput(sendSet, sendChls, maskChls);
 
-                u64 dataSent = 0;
-                for (u64 g = 0; g < sendChls.size(); ++g)
-                {
-                    dataSent += sendChls[g].getTotalDataSent();
-                }
-
-                for (u64 g = 0; g < sendChls.size(); ++g)
+                for (u64 g = 0; g < sendChls.size(); ++g) {
                     sendChls[g].resetStats();
+                    maskChls[g].resetStats();
+                }
             }
         }
     }
@@ -533,7 +531,7 @@ void kkrtRecv(
         for (auto numThreads : params.mNumThreads)
         {
             auto chls = params.getChannels(numThreads);
-
+            auto mchls = params.getChannels2(numThreads);
 
             for (u64 jj = 0; jj < params.mTrials; jj++)
             {
@@ -568,7 +566,8 @@ void kkrtRecv(
                 auto mid = timer.setTimePoint("init");
 
 
-                recvPSIs.sendInput(recvSet, chls);
+                // recvPSIs.sendInput(recvSet, chls);
+                recvPSIs.sendInput(recvSet, chls, mchls);
 
 
                 auto end = timer.setTimePoint("done");
@@ -578,7 +577,7 @@ void kkrtRecv(
 
                 //auto byteSent = chls[0]->getTotalDataSent() *chls.size();
 
-                printTimings(tag, chls, offlineTime, onlineTime, params, setSize, numThreads);
+                printTimings(tag, chls, offlineTime, onlineTime, params, setSize, numThreads, 1, &mchls);
 
                 if (recvPSIs.mIntersection.size() != setSize / 2) {
                     std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << setSize / 2 << std::endl;

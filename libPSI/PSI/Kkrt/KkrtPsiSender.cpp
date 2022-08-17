@@ -399,12 +399,14 @@ namespace osuCrypto
                 std::mutex mtx_syn, mtx_que;
                 std::condition_variable cv_syn;
                 std::queue<u8 *> recvQue;
-                u64 corByte = sizeof(block) * mOtSenders[pid].mGens.size() / 128;
+                u64 corByte = 456 / 8;
+                // u64 corByte = sizeof(block) * mOtSenders[pid].mGens.size() / 128;
                 auto thrd = std::thread([&]() {
                     while (recvedIdx < binEnd)
                     {
                         auto currentStepSize = std::min(stepSize, binEnd - recvedIdx);
                         u8* buffer = new u8[currentStepSize * corByte];
+                        // recv指定长度
                         chls[pid].recv(buffer, currentStepSize * corByte);
 
                         mtx_que.lock();
@@ -427,9 +429,15 @@ namespace osuCrypto
                     u8 * buffer = recvQue.front();
                     recvQue.pop();
                     mtx_que.unlock();
-                    auto dest = mOtSenders[pid].mCorrectionVals.begin() + (mOtSenders[pid].mCorrectionIdx * corByte / sizeof(block));
-                    memcpy((u8*)&*dest, buffer, currentStepSize * corByte);
+
+                    u64 otCorStride = mOtSenders[pid].mCorrectionVals.stride();
+                    auto dest = mOtSenders[pid].mCorrectionVals.begin() + (mOtSenders[pid].mCorrectionIdx * otCorStride);
+                    for (int i = 0; i < currentStepSize; i++) {
+                        memcpy((u8*)&*dest, buffer + i * corByte, corByte);
+                        dest += otCorStride;
+                    }
                     mOtSenders[pid].mCorrectionIdx += currentStepSize;
+
                     delete[] buffer;
 
                     auto stepEnd = stepIdx + currentStepSize;

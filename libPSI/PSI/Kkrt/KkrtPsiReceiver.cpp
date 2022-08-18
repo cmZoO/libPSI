@@ -158,11 +158,11 @@ namespace osuCrypto
         setTimePoint("kkrt.R Online.sendBucketMask done");
 
         std::thread maskThrd[chls.size()];
-        u64 thrdDataSize = std::ceil(1.0 * inputs.size() / chls.size());
+        u64 thrdDataSize = std::ceil(1.0 * mSenderSize / chls.size());
         std::vector<std::vector<u64>> thrdIntersections(chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto inputStart = pid * thrdDataSize;
-            auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
+            auto inputEnd = std::min(mSenderSize, inputStart + thrdDataSize);
             maskThrd[pid] = std::thread([pid, inputStart, &thrdIntersections, maskByteSize, &chls, inputEnd, &localMasks, this]() {
                 Matrix<u8> myMaskBuff(stepSize * mIndex.mParams.mNumHashes, maskByteSize);
                 for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)

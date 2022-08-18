@@ -355,18 +355,19 @@ namespace osuCrypto
 
         Matrix<u8> myMaskBuff(mSenderSize * mParams.mNumHashes, maskSize);
 
-        setTimePoint("kkrt.S Online.hashing start");
-
-        std::vector<u64> binIndex(numBins + 1);
-        std::vector<u64> binIdx(mParams.mNumHashes * numBins);
-        std::vector<u8> binHash(mParams.mNumHashes * numBins);
-        hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
-
         mPermute.resize(mSenderSize);
         for (u64 i = 0; i < mSenderSize; ++i) mPermute[i] = i;
         std::shuffle(mPermute.begin(), mPermute.end(), mPrng);
 
         setTimePoint("kkrt.S offline.perm done");
+
+        setTimePoint("kkrt.S Online.hashing start");
+
+        std::vector<u64> binIndex(numBins + 1);
+        std::vector<u64> binIdx(mParams.mNumHashes * mSenderSize);
+        std::vector<u8> binHash(mParams.mNumHashes * mSenderSize);
+        hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
+     
 
         setTimePoint("kkrt.S Online.linear start");
         std::thread oprfThrd[chls.size()];
@@ -441,10 +442,10 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S Online.send start");
         std::thread maskThrd[chls.size()];
-        u64 thrdDataSize = std::ceil(1.0 * inputs.size() / chls.size());
+        u64 thrdDataSize = std::ceil(1.0 * mSenderSize / chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             auto inputStart = pid * thrdDataSize;
-            auto inputEnd = std::min(inputs.size(), inputStart + thrdDataSize);
+            auto inputEnd = std::min(mSenderSize, inputStart + thrdDataSize);
             maskThrd[pid] = std::thread([pid, inputStart, &chls, inputEnd, &myMaskBuff, this]() {
                 for (u64 inputId = inputStart; inputId < inputEnd; inputId += stepSize)
                 {
@@ -478,8 +479,8 @@ namespace osuCrypto
         setTimePoint("kkrt.S Online.hashing start");
 
         std::vector<u64> binIndex(numBins + 1);
-        std::vector<u64> binIdx(mParams.mNumHashes * numBins);
-        std::vector<u8> binHash(mParams.mNumHashes * numBins);
+        std::vector<u64> binIdx(mParams.mNumHashes * mSenderSize);
+        std::vector<u8> binHash(mParams.mNumHashes * mSenderSize);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, Matrix<u8>(), mPermute, mParams.mNumHashes, binIndex, binIdx, binHash);
 
         setTimePoint("kkrt.S Online.linear start");

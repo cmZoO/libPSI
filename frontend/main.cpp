@@ -52,6 +52,7 @@ rr16Tags{ "rr16" },
 rr17aTags{ "rr17a" },
 rr17aSMTags{ "rr17a-sm" },
 rr17bTags{ "rr17b" },
+cm20Tag{ "cm20" },
 kkrtTag{ "kkrt" },
 drrnTag{ "drrt" },
 ecdhTags{ "ecdh" },
@@ -72,7 +73,9 @@ bitSizeTag{ "b","bitSize" },
 binScalerTag{ "s", "binScaler" },
 statSecParamTag{ "ssp" },
 numHashTag{ "nh" },
-bigBlockTag{ "bigBlock" };
+bigBlockTag{ "bigBlock" },
+senderSizeTag{ "ss" },
+receiverSizeTag{ "rs" };
 
 bool firstRun(true);
 
@@ -215,7 +218,8 @@ void benchmark(
         params.mBinScaler = cmd.getMany<double>(binScalerTag);
         params.mStatSecParam = cmd.get<u64>(statSecParamTag);
         params.mCmd = &cmd;
-
+		params.senderSize = cmd.get<u64>(senderSizeTag);
+		params.receiverSize = cmd.get<u64>(receiverSizeTag);
 
 		if (cmd.isSet(powNumItems))
 		{
@@ -450,6 +454,7 @@ int main(int argc, char** argv)
 		benchmark(rr17aSMTags, cmd, rr17aRecv_StandardModel, rr17aSend_StandardModel);
 		benchmark(rr17bTags, cmd, rr17bRecv, rr17bSend);
 		benchmark(kkrtTag, cmd, kkrtRecv, kkrtSend);
+		benchmark(cm20Tag, cmd, cm20Recv, cm20Send);
 		benchmark(grrTags, cmd, grr18Recv, grr18Send);
 		benchmark(dktTags, cmd, DktRecv, DktSend);
 		benchmark(ecdhTags, cmd, EcdhRecv, EcdhSend);
@@ -465,6 +470,7 @@ int main(int argc, char** argv)
 		cmd.isSet(rr17aSMTags) == false &&
 		cmd.isSet(rr17bTags) == false &&
 		cmd.isSet(kkrtTag) == false &&
+		cmd.isSet(cm20Tag) == false &&
         cmd.isSet(drrnTag) == false &&
         cmd.isSet(grrTags) == false &&
         cmd.isSet(dktTags) == false &&
@@ -494,7 +500,8 @@ int main(int argc, char** argv)
 			<< "   -" << ecdhTags[0] << "     : ECHD   - Diffie-Hellma key exchange (semihonest secure)\n"
 
 			<< "   -" << kkrtTag[0] << "    : KKRT16  - Hash to Bin & compare style (semi-honest secure, fastest)\n"
-            << "   -" << drrnTag[0] << "  : DRRN17  - Two server PIR style (semi-honest secure)\n" 
+            << "   -" << cm20Tag[0] << "    : CM20  - Multi-Point OPRF & compare style (semi-honest secure, fastest)\n"
+			<< "   -" << drrnTag[0] << "  : DRRN17  - Two server PIR style (semi-honest secure)\n" 
 			<< std::endl;
 
 		std::cout << Color::Green << "File based PSI Parameters: " << Color::Default

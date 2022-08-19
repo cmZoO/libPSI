@@ -438,6 +438,8 @@ int main(int argc, char** argv)
     cmd.setDefault(statSecParamTag, 40);
     cmd.setDefault("eps", "0.1");
 	cmd.setDefault(verboseTags, std::to_string(1 & (u8)cmd.isSet(verboseTags)));
+	cmd.setDefault(senderSizeTag, 0);
+	cmd.setDefault(receiverSizeTag, 0);
 
 	// main protocols, they run if the flag is set.
     bool hasProtocolTag = false;

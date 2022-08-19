@@ -449,7 +449,7 @@ namespace osuCrypto
         Matrix<u8> myMaskBuff,
         span<u64> perm,
         u64 numHashes,
-        span<u64> binIndex,
+        span<std::atomic<u64>> binIndex,
         span<u64> binIdx,
         span<u8> binHash,
         u64 threadNum
@@ -468,32 +468,53 @@ namespace osuCrypto
             hashThrd[pid].join();
         }
 
-        for (u64 i = 0; i < items.size(); i++) {
-            for (u64 j = 0; j < numHashes; j++) {
-                auto& bid = binIdxs(i, j);
-                if (bid == -1) {
-                    for (;;) {
-                        bid = prng.get<u64>() % numBins;
-                        if (bid != binIdxs(i, (j+1)%numHashes) &&
-                            bid != binIdxs(i, (j+2)%numHashes)) 
-                            break;
+        std::mutex mtx_syn;
+        for (u64 pid = 0; pid < threadNum; pid++) {
+            auto hashStart = pid * thrdHashSize;
+            auto hashEnd = std::min(items.size(), hashStart + thrdHashSize);
+            hashThrd[pid] = std::thread([&items, &mtx_syn, numHashes, &binIdxs, &binIndex, hashingSeed, numBins, &prng, &myMaskBuff, &perm, hashStart, hashEnd]() {
+                for (u64 i = hashStart; i < hashEnd; i++) {
+                    for (u64 j = 0; j < numHashes; j++) {
+                        auto& bid = binIdxs(i, j);
+                        if (bid == -1) {
+                            for (;;) {
+                                bid = prng.get<u64>() % numBins;
+                                if (bid != binIdxs(i, (j+1)%numHashes) &&
+                                    bid != binIdxs(i, (j+2)%numHashes)) 
+                                    break;
+                            }
+                        }
+                        binIndex[bid].fetch_add(1, std::memory_order::memory_order_release);
                     }
                 }
-                binIndex[bid]++;
-            }
+            });
         }
+        for (u64 pid = 0; pid < threadNum; pid++) {
+            hashThrd[pid].join();
+        }
+        
         for (u64 i = 1; i < numBins; i++) {
             binIndex[i] += binIndex[i - 1];
         }
-        binIndex[numBins] = binIndex[numBins - 1];
-        for (u64 i = 0; i < items.size(); i++) {
-            for (u64 j = 0; j < numHashes; j++) {
-                auto bid = binIdxs(i, j);
-                if (bid == -1) std::cout << "error" << std::endl;
-                auto tIndex = --binIndex[bid];
-                binIdx[tIndex] = i;
-                binHash[tIndex] = j;
-            }
+        binIndex[numBins].store(binIndex[numBins - 1]);
+
+        for (u64 pid = 0; pid < threadNum; pid++) {
+            auto hashStart = pid * thrdHashSize;
+            auto hashEnd = std::min(items.size(), hashStart + thrdHashSize);
+            hashThrd[pid] = std::thread([&items, &mtx_syn, &binIdx, &binHash, numHashes, &binIdxs, &binIndex, hashingSeed, numBins, &prng, &myMaskBuff, &perm, hashStart, hashEnd]() {
+                for (u64 i = hashStart; i < hashEnd; i++) {
+                    for (u64 j = 0; j < numHashes; j++) {
+                        auto bid = binIdxs(i, j);
+                        if (bid == -1) std::cout << "error" << std::endl;
+                        auto tIndex = binIndex[bid].fetch_add(-1, std::memory_order::memory_order_release);
+                        binIdx[tIndex - 1] = i;
+                        binHash[tIndex - 1] = j;
+                    }
+                }
+            });
+        }
+        for (u64 pid = 0; pid < threadNum; pid++) {
+            hashThrd[pid].join();
         }
     }
 
@@ -518,7 +539,7 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S Online.hashing start");
 
-        std::vector<u64> binIndex(numBins + 1);
+        std::vector<std::atomic<u64>> binIndex(numBins + 1);
         std::vector<u64> binIdx(mParams.mNumHashes * mSenderSize);
         std::vector<u8> binHash(mParams.mNumHashes * mSenderSize);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, myMaskBuff, mPermute, mParams.mNumHashes, binIndex, binIdx, binHash, chls.size());
@@ -633,7 +654,7 @@ namespace osuCrypto
 
         setTimePoint("kkrt.S Online.hashing start");
 
-        std::vector<u64> binIndex(numBins + 1);
+        std::vector<std::atomic<u64>> binIndex(numBins + 1);
         std::vector<u64> binIdx(mParams.mNumHashes * mSenderSize);
         std::vector<u8> binHash(mParams.mNumHashes * mSenderSize);
         hashBinItems(inputs, mHashingSeed, numBins, mPrng, Matrix<u8>(), mPermute, mParams.mNumHashes, binIndex, binIdx, binHash, mchls.size());

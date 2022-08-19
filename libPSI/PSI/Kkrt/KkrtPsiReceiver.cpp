@@ -98,6 +98,31 @@ namespace osuCrypto
         sendInput(inputs,  chls );
     }
 
+    void cuckooHash(span<block> inputs, span<Channel> chls, block mHashingSeed, CuckooIndex<ThreadSafe> &mIndex) {
+        std::thread hashThrd[chls.size()];
+        std::vector<block> prehash(inputs.size());
+        u64 thrdHashSize = std::ceil(1.0 * inputs.size() / chls.size());
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            auto hashStart = pid * thrdHashSize;
+            auto hashEnd = std::min(inputs.size(), hashStart + thrdHashSize);
+            hashThrd[pid] = std::thread([&prehash, hashStart, hashEnd, &inputs, mHashingSeed]() {
+                AES hasher(mHashingSeed);
+                hasher.ecbEncBlocks(inputs.data() + hashStart, hashEnd - hashStart, prehash.data() + hashStart);
+                auto iter1 = inputs.data() + hashStart;
+                auto iter2 = prehash.data() + hashStart;
+                while (iter1 != inputs.data() + hashEnd) {
+                    *iter2 = *iter2 ^ *iter1;
+                    iter2++;
+                    iter1++;
+                }
+            });
+        }
+        for (u64 pid = 0; pid < chls.size(); pid++) {
+            hashThrd[pid].join();
+        }
+        mIndex.insert(prehash);
+    }
+
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls)
     {
         // std::cout << "use stable version" << std::endl;
@@ -108,7 +133,8 @@ namespace osuCrypto
 
         u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte
 
-        mIndex.insert(inputs, mHashingSeed);
+        cuckooHash(inputs, chls, mHashingSeed, mIndex);
+        // mIndex.insert(inputs, mHashingSeed);
 
         std::array<std::unordered_map<u64, std::pair<block, u64>>, 3> localMasks;
         localMasks[0].reserve(mIndex.mBins.size()); //upper bound of # mask

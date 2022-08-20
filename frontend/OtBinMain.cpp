@@ -506,8 +506,7 @@ void kkrtSend(
                 //sendChls[0].asyncSend(dummy, 1);
                 //sendChls[0].recv(dummy, 1);
 
-                sendPSIs.sendInput(sendSet, sendChls);
-                // sendPSIs.sendInput(sendSet, sendChls, maskChls);
+                sendPSIs.sendInput(sendSet, sendChls, maskChls);
 
                 for (u64 g = 0; g < sendChls.size(); ++g) {
                     sendChls[g].resetStats();
@@ -585,8 +584,7 @@ void kkrtRecv(
                 auto mid = timer.setTimePoint("init");
 
 
-                recvPSIs.sendInput(recvSet, chls);
-                // recvPSIs.sendInput(recvSet, chls, mchls);
+                recvPSIs.sendInput(recvSet, chls, mchls);
 
 
                 auto end = timer.setTimePoint("done");

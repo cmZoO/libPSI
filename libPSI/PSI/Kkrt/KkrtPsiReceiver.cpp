@@ -237,7 +237,7 @@ namespace osuCrypto
 
         u64 maskByteSize = static_cast<u64>(mStatSecParam + std::log2(mSenderSize * mRecverSize) + 7) / 8;//by byte
 
-        mIndex.insert(inputs, mHashingSeed);
+        cuckooHash(inputs, chls, mHashingSeed, mIndex);
 
         std::array<std::unordered_map<u64, std::pair<block, u64>>, 3> localMasks;
         localMasks[0].reserve(mIndex.mBins.size()); //upper bound of # mask
@@ -292,44 +292,31 @@ namespace osuCrypto
         std::vector<std::vector<u64>> thrdIntersections(chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, &localMasks, this]() {
-                Matrix<u8> myMaskBuff(1, stepSize * maskByteSize + 1);
+                Matrix<u8> myMaskBuff(1, stepSize * maskByteSize);
                 auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
+                Matrix<u8> zeroMask(1, maskByteSize);
+                memset(zeroMask.data(), 0, maskByteSize);
+
                 for (;;) {
-                    mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize + 1);
-                    u8 hashNum = myMaskBuff(0, stepSize * maskByteSize);
-                    if (hashNum == u8(-1)) {
-                        break;
-                    }
+                    mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize);
                     auto data = myMaskBuff.data();
                     u64 idxs;
-                    for (u64 i = 0; i < stepSize; i++) {
+                    u64 stepIndex;
+                    for (stepIndex = 0; stepIndex < stepSize; stepIndex++) {
+                        if (memcmp(zeroMask.data(), data, maskByteSize) == 0) break;
                         memcpy(&idxs, data, idxSize);
-                        auto iter = localMasks[hashNum].find(idxs);
-                        if (iter != localMasks[hashNum].end() && memcmp(&iter->second.first, data, maskByteSize) == 0)
-                        {
-                            thrdIntersections[pid].emplace_back(iter->second.second);
+                        for (u64 k = 0; k < localMasks.size(); k++) {
+                            auto iter = localMasks[k].find(idxs);
+                            if (iter != localMasks[k].end() && memcmp(&iter->second.first, data, maskByteSize) == 0) {
+                                thrdIntersections[pid].emplace_back(iter->second.second);
+                                break;
+                            }
                         }
                         data += maskByteSize;
                     }
+                    if (stepIndex != stepSize) break;
                 }
-                u64 buffMask[3];
-                mchls[pid].recv(buffMask, mIndex.mParams.mNumHashes * sizeof(u64));
-                for (u64 current_hash = 0; current_hash < mIndex.mParams.mNumHashes; current_hash++) {
-                    auto data = myMaskBuff.data();
-                    u64 idxs;
-                    for (u64 i = 0; i < buffMask[current_hash]; i++) {
-                        memcpy(&idxs, data, idxSize);
-                        auto iter = localMasks[current_hash].find(idxs);
-                        if (iter != localMasks[current_hash].end() && memcmp(&iter->second.first, data, maskByteSize) == 0)
-                        {
-                            thrdIntersections[pid].emplace_back(iter->second.second);
-                        }
-                        data += maskByteSize;
-                    }
-                    if (current_hash < mIndex.mParams.mNumHashes - 1) {
-                        mchls[pid].recv(myMaskBuff.data(), buffMask[current_hash + 1] * maskByteSize);
-                    }     
-                }
+                
             });
         }
 

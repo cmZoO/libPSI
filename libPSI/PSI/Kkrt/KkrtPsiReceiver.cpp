@@ -292,31 +292,29 @@ namespace osuCrypto
         std::vector<std::vector<u64>> thrdIntersections(chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
             maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, &localMasks, this]() {
-                Matrix<u8> myMaskBuff(1, stepSize * maskByteSize);
+                Matrix<u8> myMaskBuff(1, stepSize * maskByteSize + 1);
                 auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
                 Matrix<u8> zeroMask(1, maskByteSize);
                 memset(zeroMask.data(), 0, maskByteSize);
 
-                for (;;) {
-                    mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize);
+                u64 endFlag = 0;
+                while (endFlag < localMasks.size()) {
+                    mchls[pid].recv(myMaskBuff.data(), stepSize * maskByteSize + 1);
                     auto data = myMaskBuff.data();
                     u64 idxs;
                     u64 stepIndex;
+                    u8 inputHash = myMaskBuff(0, stepSize * maskByteSize);
                     for (stepIndex = 0; stepIndex < stepSize; stepIndex++) {
                         if (memcmp(zeroMask.data(), data, maskByteSize) == 0) break;
                         memcpy(&idxs, data, idxSize);
-                        for (u64 k = 0; k < localMasks.size(); k++) {
-                            auto iter = localMasks[k].find(idxs);
-                            if (iter != localMasks[k].end() && memcmp(&iter->second.first, data, maskByteSize) == 0) {
-                                thrdIntersections[pid].emplace_back(iter->second.second);
-                                break;
-                            }
+                        auto iter = localMasks[inputHash].find(idxs);
+                        if (iter != localMasks[inputHash].end() && memcmp(&iter->second.first, data, maskByteSize) == 0) {
+                            thrdIntersections[pid].emplace_back(iter->second.second);
                         }
                         data += maskByteSize;
                     }
-                    if (stepIndex != stepSize) break;
+                    if (stepIndex != stepSize) endFlag++;
                 }
-                
             });
         }
 

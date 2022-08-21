@@ -307,18 +307,18 @@ namespace osuCrypto
 			memset(transHashInputs[i], 0, receiverSizeInBytes);
 		}
         computeAndSendMatrixAndComputeHashKey(recvSet, otMessages, transHashInputs, chls);
+        delete[] recvSet;
         setTimePoint("cm20.Recv.matrix.end");
 
         std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> allHashes(numThreads);
         computeInputsHash(allHashes, transHashInputs);
+        for (auto i = 0; i < width; ++i) {
+			delete[] transHashInputs[i];
+		}
         setTimePoint("cm20.Recv.hash.end");
 
         receiveSenderHashAndComputePsi(allHashes, chls);
         setTimePoint("cm20.Recv.psi.end");
 
-        delete[] recvSet;
-        for (auto i = 0; i < width; ++i) {
-			delete[] transHashInputs[i];
-		}
     }
 }

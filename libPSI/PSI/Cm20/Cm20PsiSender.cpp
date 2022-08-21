@@ -250,15 +250,14 @@ namespace osuCrypto
 			memset(transHashInputs[i], 0, senderSizeInBytes);
 		}
         recvAndComputeMatrixAndComputeHashKey(sendSet, otMessages, choices, transHashInputs, chls);
+        delete[] sendSet;
         setTimePoint("cm20.Send.matrix.end");
 
         computeInputsHashAndSend(transHashInputs, chls);
-        setTimePoint("cm20.Send.hash.end");
-
-        delete[] sendSet;
         for (auto i = 0; i < width; ++i) {
 			delete[] transHashInputs[i];
 		}
+        setTimePoint("cm20.Send.hash.end");
     }
 }
 

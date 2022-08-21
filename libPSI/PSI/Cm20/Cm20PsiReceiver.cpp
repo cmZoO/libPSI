@@ -115,8 +115,8 @@ namespace osuCrypto
         auto go = [&](u64 pid, u64 start, u64 end) {
             AES commonAes;
             commonAes.setKey(commonSeed);
-            std::future<void> fut;
-            bool futSet = false;
+            std::future<void> futs[widthBucket1];
+            bool futSets[widthBucket1] = {false};
 
             block randomLocations[bucket1];
             u8* matrixA[widthBucket1];
@@ -158,13 +158,13 @@ namespace osuCrypto
                     PRNG prng(otMessages[i + wLeft][0]);
                     prng.get(matrixA[i], heightInBytes);
                     prng.SetSeed(otMessages[i + wLeft][1]);
-                    if (futSet) fut.get();
+                    if (futSets[i]) futs[i].get();
                     prng.get(sentMatrix[i], heightInBytes);
                     for (auto j = 0; j < heightInBytes; ++j) {
                         sentMatrix[i][j] ^= matrixA[i][j] ^ matrixDelta[i][j];
                     }
-                    fut = chls[pid].asyncSendFuture(sentMatrix[i], heightInBytes);
-                    futSet = true;
+                    futs[i] = chls[pid].asyncSendFuture(sentMatrix[i], heightInBytes);
+                    futSets[i] = true;
                 }
                 ///////////////// Compute hash inputs (transposed) /////////////////////
                 for (auto i = 0; i < w; ++i) {
@@ -174,8 +174,8 @@ namespace osuCrypto
                     }		
                 }
             }
-            if (futSet) fut.get();
             for (auto i = 0; i < widthBucket1; ++i) {
+                if (futSets[i]) futs[i].get();
                 delete[] transLocations[i];
                 delete[] matrixA[i];
                 delete[] matrixDelta[i];

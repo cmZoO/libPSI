@@ -596,17 +596,17 @@ void kkrtRecv(
 
                 printTimings(tag, chls, offlineTime, onlineTime, params, receiverSize, numThreads, 1, &mchls);
 
-                if (recvPSIs.mIntersection.size() != receiverSize / 2) {
-                    std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << receiverSize / 2 << std::endl;
+                if (recvPSIs.intersectionSize != receiverSize / 2) {
+                    std::cout << "intersection size " << recvPSIs.intersectionSize << " not match" << receiverSize / 2 << std::endl;
                 }
-                sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.end());
+                sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.begin() + recvPSIs.intersectionSize);
                 int i;
-                for (i = 0; i < recvPSIs.mIntersection.size(); i++) {
+                for (i = 0; i < recvPSIs.intersectionSize; i++) {
                     if (recvPSIs.mIntersection[i] != i) {
                         break;
                     }
                 }
-                if (i != recvPSIs.mIntersection.size()) {
+                if (i != recvPSIs.intersectionSize) {
                     std::cout << "intersection wrong result" << std::endl;
                 } 
             }
@@ -751,17 +751,17 @@ void cm20Recv(
 
                 // std::cout << timer;
 
-                if (recvPSIs.mIntersection.size() != receiverSize / 2) {
-                    std::cout << "intersection size " << recvPSIs.mIntersection.size() << " not match" << receiverSize / 2 << std::endl;
+                if (recvPSIs.intersectionSize != receiverSize / 2) {
+                    std::cout << "intersection size " << recvPSIs.intersectionSize << " not match" << receiverSize / 2 << std::endl;
                 }
-                sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.end());
+                sort(recvPSIs.mIntersection.begin(), recvPSIs.mIntersection.begin() + recvPSIs.intersectionSize);
                 int i;
-                for (i = 0; i < recvPSIs.mIntersection.size(); i++) {
+                for (i = 0; i < recvPSIs.intersectionSize; i++) {
                     if (recvPSIs.mIntersection[i] != i) {
                         break;
                     }
                 }
-                if (i != recvPSIs.mIntersection.size()) {
+                if (i != recvPSIs.intersectionSize) {
                     std::cout << "intersection wrong result" << std::endl;
                 } 
             }

@@ -23,6 +23,7 @@ namespace osuCrypto
 
         u64 mRecverSize,mSenderSize,mStatSecParam;
         std::vector<u64> mIntersection;
+        std::atomic<u64> intersectionSize;
         CuckooIndex<ThreadSafe> mIndex;
 
         std::vector<KkrtNcoOtReceiver> mOtRecvs;

@@ -51,6 +51,9 @@ namespace osuCrypto
         fu.get();
         commonSeed = myHashSeeds ^ theirHashingSeeds;
 
+        mIntersection.resize(mReceiverSize);
+        intersectionSize.store(0);
+
         setTimePoint("cm20.Recv.Init.end");
     }
 
@@ -245,7 +248,6 @@ namespace osuCrypto
     void Cm20PsiReceiver::receiveSenderHashAndComputePsi(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> &allHashes, span<Channel> chls) {
         u64 hashLengthInBytes = (ceil(mStatSecParam+log2(mSenderSize)+log2(mReceiverSize))+7)/8;
 
-        std::vector<std::vector<u32>> threadIntersections(numThreads);
         auto go = [&](u64 pid, u64 start, u64 end) {
             u8* recvBuff = new u8[bucket2 * hashLengthInBytes];
             u8 hashOutput[sizeof(block)];
@@ -257,14 +259,14 @@ namespace osuCrypto
                 for (auto idx = 0; idx < up - low; ++idx) {
                     memcpy(hashOutput, recvBuff + idx * hashLengthInBytes, hashLengthInBytes);
                     u64 mapIdx = *(u64*)(hashOutput);
-                    
                     for (u64 hashIndex = 0; hashIndex < numThreads; hashIndex++) {
                         auto found = allHashes[hashIndex].find(mapIdx);
                         if (found == allHashes[hashIndex].end()) continue;
                         bool intersection = false;
                         for (auto i = 0; i < found->second.size(); ++i) {
                             if (memcmp(&(found->second[i].first), recvBuff + idx * hashLengthInBytes, hashLengthInBytes) == 0) {
-                                threadIntersections[pid].emplace_back(found->second[i].second);
+                                auto t_index = intersectionSize.fetch_add(1, std::memory_order::memory_order_release);
+                                mIntersection[t_index] = found->second[i].second;
                                 intersection = true;
                                 break;
                             }
@@ -285,7 +287,6 @@ namespace osuCrypto
         }
         for (u64 i = 0; i < numThreads; i++) {
             threads[i].join();
-            mIntersection.insert(mIntersection.end(), threadIntersections[i].begin(), threadIntersections[i].end());
         }
     }
 

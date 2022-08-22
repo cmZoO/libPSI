@@ -23,6 +23,7 @@ namespace osuCrypto
         u64 mReceiverSize,mSenderSize,mStatSecParam;
         u64 height, width;
         std::vector<u32> mIntersection;
+        std::atomic<u64> intersectionSize;
 
         block commonSeed;
         PRNG mPrng;

@@ -87,6 +87,9 @@ namespace osuCrypto
             });
         }
 
+        mIntersection.resize(mRecverSize);
+        intersectionSize.store(0);
+
         for (u64 i = 0; i < chls.size(); i++) {
             otThrd[i].join();
         }
@@ -125,7 +128,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls)
     {
-        // std::cout << "use stable version" << std::endl;
+        std::cout << "use stable version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");
@@ -229,7 +232,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls)
     {
-        std::cout << "use memory optimial version" << std::endl;
+        // std::cout << "use memory optimial version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");
@@ -289,9 +292,8 @@ namespace osuCrypto
         setTimePoint("kkrt.R Online.sendBucketMask done");
 
         std::thread maskThrd[chls.size()];
-        std::vector<std::vector<u64>> thrdIntersections(chls.size());
         for (u64 pid = 0; pid < chls.size(); pid++) {
-            maskThrd[pid] = std::thread([pid, &mchls, &thrdIntersections, maskByteSize, &localMasks, this]() {
+            maskThrd[pid] = std::thread([pid, &mchls, maskByteSize, &localMasks, this]() {
                 Matrix<u8> myMaskBuff(1, stepSize * maskByteSize + 1);
                 auto idxSize = std::min<u64>(maskByteSize, sizeof(u64));
                 Matrix<u8> zeroMask(1, maskByteSize);
@@ -309,7 +311,8 @@ namespace osuCrypto
                         memcpy(&idxs, data, idxSize);
                         auto iter = localMasks[inputHash].find(idxs);
                         if (iter != localMasks[inputHash].end() && memcmp(&iter->second.first, data, maskByteSize) == 0) {
-                            thrdIntersections[pid].emplace_back(iter->second.second);
+                            auto t_index = intersectionSize.fetch_add(1, std::memory_order::memory_order_release);
+                            mIntersection[t_index] = iter->second.second;
                         }
                         data += maskByteSize;
                     }
@@ -320,7 +323,6 @@ namespace osuCrypto
 
         for (u64 pid = 0; pid < chls.size(); pid++) {
             maskThrd[pid].join();
-            mIntersection.insert(mIntersection.end(), thrdIntersections[pid].begin(), thrdIntersections[pid].end());
         }
 
         setTimePoint("kkrt.R Online.Bucket done");

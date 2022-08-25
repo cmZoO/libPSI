@@ -125,7 +125,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls)
     {
-        // std::cout << "use stable version" << std::endl;
+        std::cout << "use stable version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");
@@ -229,7 +229,7 @@ namespace osuCrypto
 
     void KkrtPsiReceiver::sendInput(span<block> inputs, span<Channel> chls, span<Channel> mchls)
     {
-        std::cout << "use memory optimial version" << std::endl;
+        // std::cout << "use memory optimial version" << std::endl;
         // check that the number of inputs is as expected.
         if (inputs.size() != mRecverSize)
             throw std::runtime_error("inputs.size() != mN");

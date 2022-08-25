@@ -20,7 +20,7 @@ add_definitions(-DSOLUTION_DIR=\"${CMAKE_SOURCE_DIR}\")
 add_subdirectory(libPSI)
 add_subdirectory(libPSI_Tests)
 add_subdirectory(frontend)
-
+add_subdirectory(cmpt)
 
 
 # setup the install

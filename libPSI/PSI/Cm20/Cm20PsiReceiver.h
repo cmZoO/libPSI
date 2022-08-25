@@ -22,7 +22,7 @@ namespace osuCrypto
 
         u64 mReceiverSize,mSenderSize,mStatSecParam;
         u64 height, width;
-        std::vector<u32> mIntersection;
+        std::vector<u64> mIntersection;
 
         block commonSeed;
         PRNG mPrng;
@@ -34,8 +34,8 @@ namespace osuCrypto
 
         void randomizeInputs(block* recvSet, span<block> &inputs);
         void computeAndSendMatrixAndComputeHashKey(block* recvSet, std::vector<std::array<block, 2>> &otMessages, u8** transHashInputs, span<Channel> chls);
-        void computeInputsHash(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> &allHashes, u8** transHashInputs);
-        void receiveSenderHashAndComputePsi(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> &allHashes, span<Channel> chls);
+        void computeInputsHash(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u64>>>> &allHashes, u8** transHashInputs);
+        void receiveSenderHashAndComputePsi(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u64>>>> &allHashes, span<Channel> chls);
     };
 
 

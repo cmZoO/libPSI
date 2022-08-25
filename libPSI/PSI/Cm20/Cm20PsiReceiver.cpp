@@ -194,7 +194,7 @@ namespace osuCrypto
         }
     }
 
-    void Cm20PsiReceiver::computeInputsHash(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> &allHashes, u8** transHashInputs) {
+    void Cm20PsiReceiver::computeInputsHash(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u64>>>> &allHashes, u8** transHashInputs) {
         /////////////////// Compute hash outputs ///////////////////////////
         u64 hashLengthInBytes = (ceil(mStatSecParam+log2(mSenderSize)+log2(mReceiverSize))+7)/8;
         u64 widthInBytes = (width + 7) / 8;
@@ -242,10 +242,10 @@ namespace osuCrypto
         }
     }
 
-    void Cm20PsiReceiver::receiveSenderHashAndComputePsi(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> &allHashes, span<Channel> chls) {
+    void Cm20PsiReceiver::receiveSenderHashAndComputePsi(std::vector<std::unordered_map<u64, std::vector<std::pair<block, u64>>>> &allHashes, span<Channel> chls) {
         u64 hashLengthInBytes = (ceil(mStatSecParam+log2(mSenderSize)+log2(mReceiverSize))+7)/8;
 
-        std::vector<std::vector<u32>> threadIntersections(numThreads);
+        std::vector<std::vector<u64>> threadIntersections(numThreads);
         auto go = [&](u64 pid, u64 start, u64 end) {
             u8* recvBuff = new u8[bucket2 * hashLengthInBytes];
             u8 hashOutput[sizeof(block)];
@@ -315,7 +315,7 @@ namespace osuCrypto
         delete[] recvSet;
         setTimePoint("cm20.Recv.matrix.end");
 
-        std::vector<std::unordered_map<u64, std::vector<std::pair<block, u32>>>> allHashes(numThreads);
+        std::vector<std::unordered_map<u64, std::vector<std::pair<block, u64>>>> allHashes(numThreads);
         computeInputsHash(allHashes, transHashInputs);
         for (auto i = 0; i < width; ++i) {
 			delete[] transHashInputs[i];
